@@ -39,7 +39,9 @@ docker compose config
 docker compose up --build
 ```
 
-`docker-compose.yml` 包含 `postgres`、`backend`、`frontend` 三个服务。`backend` 依赖 PostgreSQL 健康检查，`frontend` 使用静态文件服务暴露 Vite build 产物。
+`docker-compose.yml` 包含 `postgres`、`backend`、`frontend` 三个服务。`backend` 依赖 PostgreSQL 健康检查，挂载 `/var/run/docker.sock` 以创建 Agent 容器；`frontend` 使用静态文件服务暴露 Vite build 产物。
+
+运行真实 Agent 前，需要准备 `AGENT_IMAGE` 指向的镜像，镜像内应包含 `codex` CLI，并能执行 `sleep infinity`。如果镜像未准备好，后端仍会启动，但 Agent 会保持 `offline`。
 
 ## MVP 口径
 

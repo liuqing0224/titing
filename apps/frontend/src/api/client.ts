@@ -15,11 +15,11 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     }
   });
 
+  const payload = (await response.json()) as ApiResponse<T>;
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw new Error(payload.message || `HTTP ${response.status}`);
   }
 
-  const payload = (await response.json()) as ApiResponse<T>;
   if (payload.code !== 0) {
     throw new Error(payload.message);
   }

@@ -145,6 +145,109 @@ describe("OrchestratorService", () => {
     );
     expect(agentService.markIdle).toHaveBeenCalledWith("agent-1");
   });
+
+  it("releases agent even when result reporting fails", async () => {
+    const task = createTask({ id: "auto-1", status: "queued" });
+    const agent = createAgent({ id: "agent-1" });
+    const taskService = createTaskService([task]);
+    const agentService = createAgentService([agent]);
+    const runner = createRunner({ exitCode: 0, stdout: "ok", stderr: "" });
+    const reporter = {
+      reportSuccess: jest.fn(async () => {
+        throw new Error("comment failed");
+      }),
+      reportFailure: jest.fn(async () => undefined)
+    };
+    const service = new OrchestratorService(
+      taskService as never,
+      agentService as never,
+      runner as never,
+      reporter as never
+    );
+
+    await service.poll();
+
+    expect(taskService.markDoneInternal).toHaveBeenCalled();
+    expect(agentService.markIdle).toHaveBeenCalledWith("agent-1");
+  });
+
+  it("refreshes heartbeat before and after Codex execution", async () => {
+    const task = createTask({ id: "auto-1", status: "queued" });
+    const agent = createAgent({ id: "agent-1" });
+    const taskService = createTaskService([task]);
+    const agentService = createAgentService([agent]);
+    const runner = createRunner({ exitCode: 0, stdout: "ok", stderr: "" });
+    const service = new OrchestratorService(
+      taskService as never,
+      agentService as never,
+      runner as never,
+      createResultReporter() as never
+    );
+
+    await service.poll();
+
+    expect(agentService.refreshHeartbeat).toHaveBeenCalledWith("agent-1");
+    expect(agentService.refreshHeartbeat).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips overlapping poll while a previous poll is still running", async () => {
+    let resolveRun: (value: { exitCode: number; stdout: string; stderr: string }) => void = () => undefined;
+    let markRunStarted: () => void = () => undefined;
+    const runStarted = new Promise<void>((resolve) => {
+      markRunStarted = resolve;
+    });
+    const task = createTask({ id: "auto-1", status: "queued" });
+    const agent = createAgent({ id: "agent-1" });
+    const taskService = createTaskService([task]);
+    const agentService = createAgentService([agent]);
+    const runner = {
+      run: jest.fn(
+        () => {
+          markRunStarted();
+          return (
+          new Promise<{ exitCode: number; stdout: string; stderr: string }>((resolve) => {
+            resolveRun = resolve;
+          })
+          );
+        }
+      )
+    };
+    const service = new OrchestratorService(
+      taskService as never,
+      agentService as never,
+      runner as never,
+      createResultReporter() as never
+    );
+
+    const firstPoll = service.poll();
+    await runStarted;
+    await service.poll();
+    resolveRun({ exitCode: 0, stdout: "ok", stderr: "" });
+    await firstPoll;
+
+    expect(agentService.detectOfflineAgents).toHaveBeenCalledTimes(1);
+    expect(runner.run).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases claimed agent when task claim fails", async () => {
+    const task = createTask({ id: "auto-1", status: "queued" });
+    const agent = createAgent({ id: "agent-1" });
+    const taskService = createTaskService([task]);
+    taskService.claim.mockRejectedValueOnce(new Error("stale task state"));
+    const agentService = createAgentService([agent]);
+    const runner = createRunner({ exitCode: 0, stdout: "ok", stderr: "" });
+    const service = new OrchestratorService(
+      taskService as never,
+      agentService as never,
+      runner as never,
+      createResultReporter() as never
+    );
+
+    await service.poll();
+
+    expect(agentService.markIdle).toHaveBeenCalledWith("agent-1");
+    expect(runner.run).not.toHaveBeenCalled();
+  });
 });
 
 function createTaskService(tasks: Task[]) {
@@ -196,7 +299,8 @@ function createAgentService(agents: Agent[]) {
       agent.status = "idle";
       agent.taskId = null;
       return agent;
-    })
+    }),
+    refreshHeartbeat: jest.fn(async (agentId: string) => agents.find((candidate) => candidate.id === agentId)!)
   };
 }
 

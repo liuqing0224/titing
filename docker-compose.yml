@@ -32,14 +32,32 @@ services:
       BACKEND_PORT: ${BACKEND_PORT:-3000}
       AGENT_POOL_SIZE: ${AGENT_POOL_SIZE:-2}
       AGENT_HEARTBEAT_TIMEOUT_SECONDS: ${AGENT_HEARTBEAT_TIMEOUT_SECONDS:-60}
-      DOCKER_BIN: ${DOCKER_BIN:-docker}
+      DOCKER_BIN: ${DOCKER_BIN:-/usr/bin/docker}
       AGENT_IMAGE: ${AGENT_IMAGE:-autodev-agent-runner:local}
       CODEX_CLI_BIN: ${CODEX_CLI_BIN:-codex}
       CODEX_WORKDIR: ${CODEX_WORKDIR:-/tmp/autodev-agent/workspaces}
       CODEX_TIMEOUT_MS: ${CODEX_TIMEOUT_MS:-1800000}
       MEEGLE_CLI_BIN: ${MEEGLE_CLI_BIN:-meegle}
+      MEEGLE_SOURCE_MODE: ${MEEGLE_SOURCE_MODE:-}
+      MEEGLE_PROJECT_KEY: ${MEEGLE_PROJECT_KEY:-}
+      MEEGLE_PROJECT_SCOPE_NAME: ${MEEGLE_PROJECT_SCOPE_NAME:-}
+      MEEGLE_SPRINT_TYPE_NAME: ${MEEGLE_SPRINT_TYPE_NAME:-}
+      MEEGLE_DEMAND_TYPE_NAME: ${MEEGLE_DEMAND_TYPE_NAME:-}
+      MEEGLE_SPRINT_LINK_FIELD: ${MEEGLE_SPRINT_LINK_FIELD:-}
+      MEEGLE_NODE_NAME: ${MEEGLE_NODE_NAME:-}
+      MEEGLE_QUERY_MQL: ${MEEGLE_QUERY_MQL:-}
+      MEEGLE_DETAIL_FIELDS: ${MEEGLE_DETAIL_FIELDS:-repo,branch,instruction,priority,description,title}
+      MEEGLE_LATEST_SPRINT_DETAIL_FIELDS: ${MEEGLE_LATEST_SPRINT_DETAIL_FIELDS:-description}
+      HOST_CODEX_HOME: ${HOST_CODEX_HOME:-}
+      HOST_GITCONFIG: ${HOST_GITCONFIG:-}
+      HOST_SSH_DIR: ${HOST_SSH_DIR:-}
+      HOST_PROJECTS_ROOT: ${HOST_PROJECTS_ROOT:-}
     ports:
       - "${BACKEND_PORT:-3000}:3000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${CODEX_WORKDIR:-/tmp/autodev-agent/workspaces}:${CODEX_WORKDIR:-/tmp/autodev-agent/workspaces}
+      - ${HOME}/.meegle:/root/.meegle
 
   frontend:
     build:

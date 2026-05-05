@@ -35,6 +35,7 @@
 
 - Agent 池预创建，最大数量固定为 2。
 - Agent 池通过 Docker CLI 创建/启动容器；容器名使用 `agent-<n>`，镜像由 `AGENT_IMAGE` 配置，`CODEX_WORKDIR` 挂载到容器内 `/workspace`。
+- Docker 部署时 backend 需要 Docker CLI 和 `/var/run/docker.sock`；如果 `AGENT_IMAGE` 未准备好，Agent 保持 `offline`，后端服务不因容器创建失败而中断。
 - Agent 超过 60 秒无心跳标记为 `offline`，并推送 `agent.status`。
 - Agent 通过 `POST /api/agents/:id/heartbeat` 刷新心跳；空闲 Agent 会在调度轮询中刷新心跳，避免预创建池在无任务时耗尽。
 - running 任务遇到 Agent offline 时优先重启/恢复原 Agent，自动重试一次；再次失败才标记任务 `failed`。

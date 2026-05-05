@@ -154,9 +154,13 @@ export class AgentService implements OnApplicationBootstrap {
     if (!this.dockerAgentService) {
       return;
     }
-    const containerState = await this.dockerAgentService.ensureContainer(agent);
-    agent.containerId = containerState.containerId;
-    agent.startedAt = agent.startedAt ?? new Date();
+    try {
+      const containerState = await this.dockerAgentService.ensureContainer(agent);
+      agent.containerId = containerState.containerId;
+      agent.startedAt = agent.startedAt ?? new Date();
+    } catch {
+      agent.status = "offline";
+    }
   }
 
   private async getAgent(agentId: string): Promise<Agent> {

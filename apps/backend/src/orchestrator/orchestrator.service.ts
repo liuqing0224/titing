@@ -15,6 +15,8 @@ const PRIORITY_RANK: Record<string, number> = {
 
 @Injectable()
 export class OrchestratorService {
+  private polling = false;
+
   constructor(
     private readonly taskService: TaskService,
     private readonly agentService: AgentService,
@@ -24,37 +26,50 @@ export class OrchestratorService {
 
   @Cron(CronExpression.EVERY_30_SECONDS)
   async poll(): Promise<void> {
-    await this.agentService.ensurePool(Number(process.env.AGENT_POOL_SIZE ?? 2));
-    const offlineAgents = await this.agentService.detectOfflineAgents(
-      Number(process.env.AGENT_HEARTBEAT_TIMEOUT_SECONDS ?? 60)
-    );
-    for (const agent of offlineAgents) {
-      if (agent.taskId) {
-        await this.taskService.retryRunningAfterAgentOffline(agent.taskId);
-        await this.agentService.markIdle(agent.id);
-      }
+    if (this.polling) {
+      return;
     }
 
-    const tasks = await this.taskService.listTasks({});
-    const runnableTasks = tasks
-      .filter((task) => task.status === "pending" || task.status === "queued")
-      .sort((left, right) => this.compareRunnableTasks(left, right));
-
-    const running: Array<Promise<void>> = [];
-    for (const task of runnableTasks) {
-      const queuedTask = await this.prepareQueuedTask(task);
-      if (!queuedTask) {
-        continue;
+    this.polling = true;
+    try {
+      await this.agentService.ensurePool(Number(process.env.AGENT_POOL_SIZE ?? 2));
+      const offlineAgents = await this.agentService.detectOfflineAgents(
+        Number(process.env.AGENT_HEARTBEAT_TIMEOUT_SECONDS ?? 60)
+      );
+      for (const agent of offlineAgents) {
+        if (agent.taskId) {
+          await this.taskService.retryRunningAfterAgentOffline(agent.taskId);
+          await this.agentService.markIdle(agent.id);
+        }
       }
 
-      const agent = await this.agentService.claimIdleAgent(queuedTask.id);
-      if (!agent) {
-        break;
+      const tasks = await this.taskService.listTasks({});
+      const runnableTasks = tasks
+        .filter((task) => task.status === "pending" || task.status === "queued")
+        .sort((left, right) => this.compareRunnableTasks(left, right));
+
+      const running: Array<Promise<void>> = [];
+      for (const task of runnableTasks) {
+        const queuedTask = await this.prepareQueuedTask(task);
+        if (!queuedTask) {
+          continue;
+        }
+
+        const agent = await this.agentService.claimIdleAgent(queuedTask.id);
+        if (!agent) {
+          break;
+        }
+        try {
+          const runningTask = await this.taskService.claim(queuedTask.id, agent.id);
+          running.push(this.executeRunningTask(runningTask, agent));
+        } catch {
+          await this.agentService.markIdle(agent.id);
+        }
       }
-      const runningTask = await this.taskService.claim(queuedTask.id, agent.id);
-      running.push(this.executeRunningTask(runningTask, agent));
+      await Promise.all(running);
+    } finally {
+      this.polling = false;
     }
-    await Promise.all(running);
   }
 
   private async prepareQueuedTask(task: Task): Promise<Task | null> {
@@ -79,22 +94,34 @@ export class OrchestratorService {
     task: Task,
     agent: NonNullable<Awaited<ReturnType<AgentService["findIdleAgent"]>>>
   ): Promise<void> {
+    await this.agentService.refreshHeartbeat(agent.id);
     const result = await this.codexRunner.run(task, agent);
+    await this.agentService.refreshHeartbeat(agent.id);
     const metadata = {
       stdout: result.stdout,
       stderr: result.stderr,
       exitCode: result.exitCode
     };
 
-    if (result.exitCode === 0) {
-      await this.taskService.markDoneInternal(task.id, metadata);
-      await this.resultReporter.reportSuccess(task, result);
-    } else {
-      await this.taskService.markFailedInternal(task.id, "Codex command failed", metadata);
-      await this.resultReporter.reportFailure(task, result);
+    try {
+      if (result.exitCode === 0) {
+        await this.taskService.markDoneInternal(task.id, metadata);
+        await this.ignoreReporterFailure(this.resultReporter.reportSuccess(task, result));
+      } else {
+        await this.taskService.markFailedInternal(task.id, "Codex command failed", metadata);
+        await this.ignoreReporterFailure(this.resultReporter.reportFailure(task, result));
+      }
+    } finally {
+      await this.agentService.markIdle(agent.id);
     }
+  }
 
-    await this.agentService.markIdle(agent.id);
+  private async ignoreReporterFailure(operation: Promise<void>): Promise<void> {
+    try {
+      await operation;
+    } catch {
+      // Comment-back failures should not change task terminal state or occupy an Agent.
+    }
   }
 
   private compareRunnableTasks(left: Task, right: Task): number {

@@ -44,17 +44,19 @@ export class DockerAgentService {
       }
       return inspected;
     } catch {
-      const { stdout } = await this.dockerRunner.run(dockerBin, [
+      const args = [
         "run",
         "-d",
         "--name",
         agent.containerName,
         "-v",
         `${this.getWorkspaceRoot()}:/workspace`,
+        ...this.getOptionalMountArgs(),
         this.getAgentImage(),
         "sleep",
         "infinity"
-      ]);
+      ];
+      const { stdout } = await this.dockerRunner.run(dockerBin, args);
       return {
         containerId: stdout.trim(),
         running: true
@@ -81,7 +83,7 @@ export class DockerAgentService {
   }
 
   private getDockerBin(): string {
-    return this.configService.get<string>("DOCKER_BIN", "docker");
+    return this.configService.get<string>("DOCKER_BIN", "/usr/bin/docker");
   }
 
   private getAgentImage(): string {
@@ -90,5 +92,28 @@ export class DockerAgentService {
 
   private getWorkspaceRoot(): string {
     return this.configService.get<string>("CODEX_WORKDIR", "/tmp/autodev-agent/workspaces");
+  }
+
+  private getOptionalMountArgs(): string[] {
+    const mounts: string[] = [];
+    const codexHome = this.configService.get<string>("HOST_CODEX_HOME", "").trim();
+    const gitConfig = this.configService.get<string>("HOST_GITCONFIG", "").trim();
+    const sshDir = this.configService.get<string>("HOST_SSH_DIR", "").trim();
+    const projectsRoot = this.configService.get<string>("HOST_PROJECTS_ROOT", "").trim();
+
+    if (codexHome) {
+      mounts.push("-v", `${codexHome}:/root/.codex`);
+    }
+    if (gitConfig) {
+      mounts.push("-v", `${gitConfig}:/root/.gitconfig:ro`);
+    }
+    if (sshDir) {
+      mounts.push("-v", `${sshDir}:/root/.ssh:ro`);
+    }
+    if (projectsRoot) {
+      mounts.push("-v", `${projectsRoot}:${projectsRoot}`);
+    }
+
+    return mounts;
   }
 }

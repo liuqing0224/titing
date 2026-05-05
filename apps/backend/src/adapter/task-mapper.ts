@@ -9,6 +9,7 @@ export type RawMeegleTask = {
   branch?: string | null;
   instruction?: string | null;
   priority?: string | null;
+  projectKey?: string | null;
 };
 
 export function mapRawTaskToTaskInput(raw: RawMeegleTask): Partial<Task> {

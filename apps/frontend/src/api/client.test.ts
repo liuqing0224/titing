@@ -44,4 +44,23 @@ describe("apiRequest", () => {
       "Only pending tasks can be enqueued"
     );
   });
+
+  it("throws backend error message from non-2xx global error response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 400,
+        json: async () => ({
+          code: 400,
+          data: null,
+          message: "Only failed tasks can be retried"
+        })
+      }))
+    );
+
+    await expect(apiRequest("/tasks/auto-1/retry", { method: "POST" })).rejects.toThrow(
+      "Only failed tasks can be retried"
+    );
+  });
 });

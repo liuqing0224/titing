@@ -56,8 +56,18 @@ const createLogService = () => ({
   append: jest.fn(async () => undefined)
 });
 
-const createMeegleAdapter = (tasks: RawMeegleTask[]) => ({
-  listOpenTasks: jest.fn(async () => tasks)
+const createMeegleAdapter = (tasks: RawMeegleTask[], authenticated = true) => ({
+  listOpenTasks: jest.fn(async () => tasks),
+  getAuthStatus: jest.fn(async () => ({ authenticated, host: "project.feishu.cn" })),
+  beginLogin: jest.fn(async () => ({
+    clientId: "client",
+    deviceCode: "device",
+    expiresIn: 1800,
+    interval: 5,
+    userCode: "ABC-123",
+    verificationUri: "https://project.feishu.cn/b/auth/mcp",
+    verificationUriComplete: "https://project.feishu.cn/b/auth/mcp?usercode=ABC-123"
+  }))
 });
 
 describe("AdapterService", () => {
@@ -149,5 +159,15 @@ describe("AdapterService", () => {
 
     expect(result.summary.resetToPending).toBe(1);
     expect(saved?.status).toBe("pending");
+  });
+
+  it("throws unauthorized when Meegle login is required", async () => {
+    const service = new AdapterService(
+      createRepository() as never,
+      createLogService() as never,
+      createMeegleAdapter([], false) as never
+    );
+
+    await expect(service.sync()).rejects.toThrow("Meegle login required");
   });
 });

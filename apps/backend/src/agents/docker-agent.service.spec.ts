@@ -23,7 +23,7 @@ describe("DockerAgentService", () => {
     };
     const service = new DockerAgentService(
       createConfigService({
-        DOCKER_BIN: "docker",
+        DOCKER_BIN: "/usr/bin/docker",
         AGENT_IMAGE: "autodev-agent-runner:local",
         CODEX_WORKDIR: "/tmp/workspaces"
       }) as never,
@@ -32,13 +32,13 @@ describe("DockerAgentService", () => {
 
     const result = await service.ensureContainer(createAgent());
 
-    expect(runner.run).toHaveBeenNthCalledWith(1, "docker", [
+    expect(runner.run).toHaveBeenNthCalledWith(1, "/usr/bin/docker", [
       "inspect",
       "--format",
       "{{.Id}} {{.State.Running}}",
       "agent-1"
     ]);
-    expect(runner.run).toHaveBeenNthCalledWith(2, "docker", [
+    expect(runner.run).toHaveBeenNthCalledWith(2, "/usr/bin/docker", [
       "run",
       "-d",
       "--name",
@@ -52,6 +52,47 @@ describe("DockerAgentService", () => {
     expect(result).toEqual({ containerId: "container-1", running: true });
   });
 
+  it("mounts optional host auth and git paths into new agent containers", async () => {
+    const runner = {
+      run: jest
+        .fn()
+        .mockRejectedValueOnce(new Error("No such object"))
+        .mockResolvedValueOnce({ stdout: "container-2\n", stderr: "" })
+    };
+    const service = new DockerAgentService(
+      createConfigService({
+        CODEX_WORKDIR: "/tmp/workspaces",
+        HOST_CODEX_HOME: "/Users/l/.codex",
+        HOST_GITCONFIG: "/Users/l/.gitconfig",
+        HOST_SSH_DIR: "/Users/l/.ssh",
+        HOST_PROJECTS_ROOT: "/Users/l/Documents/work/code/demo"
+      }) as never,
+      runner
+    );
+
+    await service.ensureContainer(createAgent({ containerName: "agent-2" }));
+
+    expect(runner.run).toHaveBeenNthCalledWith(2, "/usr/bin/docker", [
+      "run",
+      "-d",
+      "--name",
+      "agent-2",
+      "-v",
+      "/tmp/workspaces:/workspace",
+      "-v",
+      "/Users/l/.codex:/root/.codex",
+      "-v",
+      "/Users/l/.gitconfig:/root/.gitconfig:ro",
+      "-v",
+      "/Users/l/.ssh:/root/.ssh:ro",
+      "-v",
+      "/Users/l/Documents/work/code/demo:/Users/l/Documents/work/code/demo",
+      "autodev-agent-runner:local",
+      "sleep",
+      "infinity"
+    ]);
+  });
+
   it("starts an existing stopped container", async () => {
     const runner = {
       run: jest
@@ -63,7 +104,7 @@ describe("DockerAgentService", () => {
 
     const result = await service.ensureContainer(createAgent());
 
-    expect(runner.run).toHaveBeenNthCalledWith(2, "docker", ["start", "agent-1"]);
+    expect(runner.run).toHaveBeenNthCalledWith(2, "/usr/bin/docker", ["start", "agent-1"]);
     expect(result).toEqual({ containerId: "container-1", running: true });
   });
 
@@ -75,6 +116,6 @@ describe("DockerAgentService", () => {
 
     await service.restartContainer(createAgent());
 
-    expect(runner.run).toHaveBeenCalledWith("docker", ["restart", "agent-1"]);
+    expect(runner.run).toHaveBeenCalledWith("/usr/bin/docker", ["restart", "agent-1"]);
   });
 });

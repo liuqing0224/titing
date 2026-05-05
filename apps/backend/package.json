@@ -3,11 +3,11 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "build": "nest build",
+    "build": "tsc -p tsconfig.build.json --incremental false",
     "migration:run": "typeorm-ts-node-commonjs -d src/database/data-source.ts migration:run",
     "migration:revert": "typeorm-ts-node-commonjs -d src/database/data-source.ts migration:revert",
     "start": "node dist/main.js",
-    "start:dev": "nest start --watch",
+    "start:dev": "node --require ts-node/register src/main.ts",
     "test": "jest"
   },
   "dependencies": {

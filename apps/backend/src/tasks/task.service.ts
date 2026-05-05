@@ -178,6 +178,9 @@ export class TaskService {
     if (task.status !== "failed") {
       throw new BadRequestException("Only failed tasks can be retried");
     }
+    if (!hasValidExecutionFields(task)) {
+      throw new BadRequestException("Cannot retry task with invalid execution fields");
+    }
 
     task.status = "queued";
     const saved = await this.taskRepository.save(task);

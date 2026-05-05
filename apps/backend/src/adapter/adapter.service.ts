@@ -1,11 +1,11 @@
-import { Injectable, Optional } from "@nestjs/common";
+import { Injectable, Logger, Optional, UnauthorizedException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { EventsService } from "../events/events.service";
 import { ExecutionLogService } from "../execution-logs/execution-log.service";
 import { Task } from "../tasks/task.entity";
 import { hasValidExecutionFields } from "../tasks/task-status";
-import { MeegleAdapter } from "./meegle.adapter";
+import { MeegleAdapter, MeegleLoginPollInput } from "./meegle.adapter";
 import { mapRawTaskToTaskInput, RawMeegleTask } from "./task-mapper";
 
 export type SyncItemAction = "created" | "updated" | "failed" | "recovered" | "resetToPending";
@@ -28,6 +28,8 @@ export type SyncResult = {
 
 @Injectable()
 export class AdapterService {
+  private readonly logger = new Logger(AdapterService.name);
+
   constructor(
     @InjectRepository(Task)
     private readonly taskRepository: Repository<Task>,
@@ -38,20 +40,35 @@ export class AdapterService {
   ) {}
 
   async sync(): Promise<SyncResult> {
+    this.logger.log("Starting Meegle sync");
+    await this.ensureMeegleAuthenticated();
     const rawTasks = await this.meegleAdapter.listOpenTasks();
+    this.logger.log(`Fetched ${rawTasks.length} raw task(s) from Meegle`);
     const result = this.createEmptyResult();
 
     for (const rawTask of rawTasks) {
+      this.logger.log(`Upserting task externalId=${rawTask.id} title=${JSON.stringify(rawTask.title)}`);
       const item = await this.upsertRawTask(rawTask);
       result.items.push(item);
       result.summary[item.action] += 1;
     }
 
+    this.logger.log(`Finished Meegle sync: ${JSON.stringify(result.summary)}`);
+
     return result;
   }
 
   async listRawTasks(): Promise<RawMeegleTask[]> {
+    await this.ensureMeegleAuthenticated();
     return this.meegleAdapter.listOpenTasks();
+  }
+
+  async beginLogin() {
+    return this.meegleAdapter.beginLogin();
+  }
+
+  async pollLogin(input: MeegleLoginPollInput) {
+    return this.meegleAdapter.pollLogin(input);
   }
 
   private async upsertRawTask(rawTask: RawMeegleTask): Promise<SyncResult["items"][number]> {
@@ -188,5 +205,12 @@ export class AdapterService {
 
   private publishTask(task: Task): void {
     this.eventsService?.publishTaskLifecycle(task.id, task.status, task.agentId);
+  }
+
+  private async ensureMeegleAuthenticated(): Promise<void> {
+    const authStatus = await this.meegleAdapter.getAuthStatus();
+    if (!authStatus.authenticated) {
+      throw new UnauthorizedException("Meegle login required");
+    }
   }
 }

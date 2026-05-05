@@ -160,4 +160,17 @@ describe("TaskService", () => {
 
     await expect(service.retryFailed("auto-1")).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  it("rejects retry for failed tasks with invalid execution fields", async () => {
+    const repository = createRepository(
+      createTask({
+        status: "failed",
+        instruction: ""
+      })
+    );
+    const service = new TaskService(repository as never, createLogService() as never, createEventsService() as never);
+
+    await expect(service.retryFailed("auto-1")).rejects.toBeInstanceOf(BadRequestException);
+    expect(repository.store.get("auto-1")?.status).toBe("failed");
+  });
 });
