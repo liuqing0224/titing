@@ -1,0 +1,14 @@
+{
+  "name": "autodev-agent",
+  "private": true,
+  "workspaces": [
+    "apps/backend",
+    "apps/frontend"
+  ],
+  "scripts": {
+    "build": "npm run build -w apps/backend && npm run build -w apps/frontend",
+    "test": "npm run test -w apps/backend && npm run test -w apps/frontend",
+    "dev:backend": "npm run start:dev -w apps/backend",
+    "dev:frontend": "npm run dev -w apps/frontend"
+  }
+}

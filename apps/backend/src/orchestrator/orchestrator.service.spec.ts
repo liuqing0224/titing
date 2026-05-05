@@ -1,0 +1,214 @@
+import { Agent } from "../agents/agent.entity";
+import { Task } from "../tasks/task.entity";
+import { OrchestratorService } from "./orchestrator.service";
+
+const createTask = (overrides: Partial<Task> = {}): Task =>
+  ({
+    id: "auto-1",
+    source: "meegle",
+    externalId: "MEEGLE-1",
+    title: "Task",
+    description: null,
+    repo: "demo/repo",
+    branch: "main",
+    taskType: "feature",
+    priority: "medium",
+    status: "queued",
+    instruction: "Run Codex",
+    constraints: [],
+    retryCount: 0,
+    claimedAt: null,
+    startedAt: null,
+    completedAt: null,
+    agentId: null,
+    createdAt: new Date("2026-05-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-05-01T00:00:00.000Z"),
+    ...overrides
+  }) as Task;
+
+const createAgent = (overrides: Partial<Agent> = {}): Agent =>
+  ({
+    id: "agent-1",
+    taskId: null,
+    containerId: null,
+    containerName: "agent-1",
+    status: "idle",
+    startedAt: null,
+    heartbeatAt: new Date("2026-05-01T00:00:00.000Z"),
+    createdAt: new Date("2026-05-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-05-01T00:00:00.000Z"),
+    ...overrides
+  }) as Agent;
+
+describe("OrchestratorService", () => {
+  it("schedules higher priority tasks before older lower priority tasks", async () => {
+    const low = createTask({
+      id: "low",
+      priority: "low",
+      createdAt: new Date("2026-05-01T00:00:00.000Z")
+    });
+    const high = createTask({
+      id: "high",
+      priority: "high",
+      createdAt: new Date("2026-05-02T00:00:00.000Z")
+    });
+    const agent = createAgent();
+    const taskService = createTaskService([low, high]);
+    const agentService = createAgentService([agent]);
+    const runner = createRunner({ exitCode: 0, stdout: "ok", stderr: "" });
+    const service = new OrchestratorService(
+      taskService as never,
+      agentService as never,
+      runner as never,
+      createResultReporter() as never
+    );
+
+    await service.poll();
+
+    expect(taskService.claim).toHaveBeenCalledWith("high", "agent-1");
+  });
+
+  it("fails pending tasks that are missing execution fields", async () => {
+    const invalid = createTask({ id: "invalid", status: "pending", instruction: "" });
+    const taskService = createTaskService([invalid]);
+    const agentService = createAgentService([createAgent()]);
+    const runner = createRunner({ exitCode: 0, stdout: "ok", stderr: "" });
+    const service = new OrchestratorService(
+      taskService as never,
+      agentService as never,
+      runner as never,
+      createResultReporter() as never
+    );
+
+    await service.poll();
+
+    expect(taskService.markFailedInternal).toHaveBeenCalledWith(
+      "invalid",
+      "Task execution fields are invalid",
+      expect.objectContaining({ missingFields: ["instruction"] })
+    );
+    expect(runner.run).not.toHaveBeenCalled();
+  });
+
+  it("marks task done and releases agent when Codex exits successfully", async () => {
+    const task = createTask({ id: "auto-1", status: "queued" });
+    const agent = createAgent({ id: "agent-1" });
+    const taskService = createTaskService([task]);
+    const agentService = createAgentService([agent]);
+    const runner = createRunner({ exitCode: 0, stdout: "ok", stderr: "" });
+    const reporter = createResultReporter();
+    const service = new OrchestratorService(
+      taskService as never,
+      agentService as never,
+      runner as never,
+      reporter as never
+    );
+
+    await service.poll();
+
+    expect(taskService.markDoneInternal).toHaveBeenCalledWith("auto-1", {
+      stdout: "ok",
+      stderr: "",
+      exitCode: 0
+    });
+    expect(reporter.reportSuccess).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "auto-1" }),
+      { stdout: "ok", stderr: "", exitCode: 0 }
+    );
+    expect(agentService.markIdle).toHaveBeenCalledWith("agent-1");
+  });
+
+  it("marks task failed and releases agent when Codex exits with error", async () => {
+    const task = createTask({ id: "auto-1", status: "queued" });
+    const agent = createAgent({ id: "agent-1" });
+    const taskService = createTaskService([task]);
+    const agentService = createAgentService([agent]);
+    const runner = createRunner({ exitCode: 1, stdout: "out", stderr: "boom" });
+    const reporter = createResultReporter();
+    const service = new OrchestratorService(
+      taskService as never,
+      agentService as never,
+      runner as never,
+      reporter as never
+    );
+
+    await service.poll();
+
+    expect(taskService.markFailedInternal).toHaveBeenCalledWith("auto-1", "Codex command failed", {
+      stdout: "out",
+      stderr: "boom",
+      exitCode: 1
+    });
+    expect(reporter.reportFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "auto-1" }),
+      { stdout: "out", stderr: "boom", exitCode: 1 }
+    );
+    expect(agentService.markIdle).toHaveBeenCalledWith("agent-1");
+  });
+});
+
+function createTaskService(tasks: Task[]) {
+  return {
+    listTasks: jest.fn(async () => tasks),
+    enqueue: jest.fn(async (id: string) => {
+      const task = tasks.find((candidate) => candidate.id === id)!;
+      task.status = "queued";
+      return task;
+    }),
+    claim: jest.fn(async (id: string, agentId: string) => {
+      const task = tasks.find((candidate) => candidate.id === id)!;
+      task.status = "running";
+      task.agentId = agentId;
+      return task;
+    }),
+    markDoneInternal: jest.fn(async (id: string) => tasks.find((task) => task.id === id)!),
+    markFailedInternal: jest.fn(async (id: string) => tasks.find((task) => task.id === id)!)
+  };
+}
+
+function createAgentService(agents: Agent[]) {
+  return {
+    ensurePool: jest.fn(async () => undefined),
+    detectOfflineAgents: jest.fn(async () => []),
+    findIdleAgent: jest.fn(async () => {
+      const agent = agents.find((candidate) => candidate.status === "idle") ?? null;
+      if (agent) {
+        agent.status = "running";
+      }
+      return agent;
+    }),
+    claimIdleAgent: jest.fn(async (taskId: string) => {
+      const agent = agents.find((candidate) => candidate.status === "idle" && !candidate.taskId) ?? null;
+      if (agent) {
+        agent.status = "running";
+        agent.taskId = taskId;
+      }
+      return agent;
+    }),
+    markRunning: jest.fn(async (agentId: string, taskId: string) => {
+      const agent = agents.find((candidate) => candidate.id === agentId)!;
+      agent.status = "running";
+      agent.taskId = taskId;
+      return agent;
+    }),
+    markIdle: jest.fn(async (agentId: string) => {
+      const agent = agents.find((candidate) => candidate.id === agentId)!;
+      agent.status = "idle";
+      agent.taskId = null;
+      return agent;
+    })
+  };
+}
+
+function createRunner(result: { exitCode: number; stdout: string; stderr: string }) {
+  return {
+    run: jest.fn(async () => result)
+  };
+}
+
+function createResultReporter() {
+  return {
+    reportSuccess: jest.fn(async () => undefined),
+    reportFailure: jest.fn(async () => undefined)
+  };
+}

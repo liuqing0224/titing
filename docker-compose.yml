@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: autodev-postgres
+    environment:
+      POSTGRES_USER: ${DATABASE_USER:-autodev}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-autodev}
+      POSTGRES_DB: ${DATABASE_NAME:-autodev}
+    ports:
+      - "${DATABASE_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-autodev} -d ${DATABASE_NAME:-autodev}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: ${DATABASE_USER:-autodev}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-autodev}
+      DATABASE_NAME: ${DATABASE_NAME:-autodev}
+      BACKEND_PORT: ${BACKEND_PORT:-3000}
+      AGENT_POOL_SIZE: ${AGENT_POOL_SIZE:-2}
+      AGENT_HEARTBEAT_TIMEOUT_SECONDS: ${AGENT_HEARTBEAT_TIMEOUT_SECONDS:-60}
+      DOCKER_BIN: ${DOCKER_BIN:-docker}
+      AGENT_IMAGE: ${AGENT_IMAGE:-autodev-agent-runner:local}
+      CODEX_CLI_BIN: ${CODEX_CLI_BIN:-codex}
+      CODEX_WORKDIR: ${CODEX_WORKDIR:-/tmp/autodev-agent/workspaces}
+      CODEX_TIMEOUT_MS: ${CODEX_TIMEOUT_MS:-1800000}
+      MEEGLE_CLI_BIN: ${MEEGLE_CLI_BIN:-meegle}
+    ports:
+      - "${BACKEND_PORT:-3000}:3000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:3000/api}
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:3000/api}
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
