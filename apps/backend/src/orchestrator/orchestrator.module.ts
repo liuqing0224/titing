@@ -2,13 +2,14 @@ import { Module } from "@nestjs/common";
 import { ScheduleModule } from "@nestjs/schedule";
 import { AdapterModule } from "../adapter/adapter.module";
 import { AgentModule } from "../agents/agent.module";
+import { ExecutionLogModule } from "../execution-logs/execution-log.module";
 import { TaskModule } from "../tasks/task.module";
 import { CodexRunner } from "./codex-runner";
 import { OrchestratorService } from "./orchestrator.service";
 import { ResultReporterService } from "./result-reporter.service";
 
 @Module({
-  imports: [ScheduleModule.forRoot(), AdapterModule, AgentModule, TaskModule],
+  imports: [ScheduleModule.forRoot(), AdapterModule, AgentModule, ExecutionLogModule, TaskModule],
   providers: [CodexRunner, OrchestratorService, ResultReporterService],
   exports: [OrchestratorService]
 })

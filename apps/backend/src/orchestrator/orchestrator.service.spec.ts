@@ -1,5 +1,6 @@
 import { Agent } from "../agents/agent.entity";
 import { Task } from "../tasks/task.entity";
+import { CodexExecutionContext, CodexRunResult } from "./codex-runner";
 import { OrchestratorService } from "./orchestrator.service";
 
 const createTask = (overrides: Partial<Task> = {}): Task =>
@@ -56,9 +57,11 @@ describe("OrchestratorService", () => {
     const taskService = createTaskService([low, high]);
     const agentService = createAgentService([agent]);
     const runner = createRunner({ exitCode: 0, stdout: "ok", stderr: "" });
+    const executionLogService = createExecutionLogService();
     const service = new OrchestratorService(
       taskService as never,
       agentService as never,
+      executionLogService as never,
       runner as never,
       createResultReporter() as never
     );
@@ -73,9 +76,11 @@ describe("OrchestratorService", () => {
     const taskService = createTaskService([invalid]);
     const agentService = createAgentService([createAgent()]);
     const runner = createRunner({ exitCode: 0, stdout: "ok", stderr: "" });
+    const executionLogService = createExecutionLogService();
     const service = new OrchestratorService(
       taskService as never,
       agentService as never,
+      executionLogService as never,
       runner as never,
       createResultReporter() as never
     );
@@ -97,23 +102,65 @@ describe("OrchestratorService", () => {
     const agentService = createAgentService([agent]);
     const runner = createRunner({ exitCode: 0, stdout: "ok", stderr: "" });
     const reporter = createResultReporter();
+    const executionLogService = createExecutionLogService();
     const service = new OrchestratorService(
       taskService as never,
       agentService as never,
+      executionLogService as never,
       runner as never,
       reporter as never
     );
 
     await service.poll();
 
+    expect(executionLogService.append).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        taskId: "auto-1",
+        agentId: "agent-1",
+        status: "running",
+        message: "Preparing project workspace for branch checkout and Codex execution",
+        metadata: expect.objectContaining({
+          repo: "demo/repo",
+          branch: "main",
+          hostCwd: expect.stringContaining("/demo/repo"),
+          containerCwd: "/workspace/demo/repo"
+        })
+      })
+    );
+    expect(executionLogService.append).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        taskId: "auto-1",
+        agentId: "agent-1",
+        status: "running",
+        message: "Codex exited normally",
+        metadata: expect.objectContaining({
+          stage: "codex",
+          exitCode: 0,
+          normalExit: true,
+          branchCheckedOut: true,
+          codexStarted: true
+        })
+      })
+    );
     expect(taskService.markDoneInternal).toHaveBeenCalledWith("auto-1", {
+      repo: "demo/repo",
+      branch: "main",
+      hostCwd: expect.stringContaining("/demo/repo"),
+      containerCwd: "/workspace/demo/repo",
+      stage: "codex",
       stdout: "ok",
       stderr: "",
-      exitCode: 0
+      exitCode: 0,
+      timedOut: false,
+      branchCheckedOut: true,
+      codexStarted: true,
+      normalExit: true
     });
     expect(reporter.reportSuccess).toHaveBeenCalledWith(
       expect.objectContaining({ id: "auto-1" }),
-      { stdout: "ok", stderr: "", exitCode: 0 }
+      expect.objectContaining({ stdout: "ok", stderr: "", exitCode: 0 })
     );
     expect(agentService.markIdle).toHaveBeenCalledWith("agent-1");
   });
@@ -125,25 +172,74 @@ describe("OrchestratorService", () => {
     const agentService = createAgentService([agent]);
     const runner = createRunner({ exitCode: 1, stdout: "out", stderr: "boom" });
     const reporter = createResultReporter();
+    const executionLogService = createExecutionLogService();
     const service = new OrchestratorService(
       taskService as never,
       agentService as never,
+      executionLogService as never,
       runner as never,
       reporter as never
     );
 
     await service.poll();
 
-    expect(taskService.markFailedInternal).toHaveBeenCalledWith("auto-1", "Codex command failed", {
+    expect(taskService.markFailedInternal).toHaveBeenCalledWith("auto-1", "Codex exited abnormally", {
+      repo: "demo/repo",
+      branch: "main",
+      hostCwd: expect.stringContaining("/demo/repo"),
+      containerCwd: "/workspace/demo/repo",
+      stage: "codex",
       stdout: "out",
       stderr: "boom",
-      exitCode: 1
+      exitCode: 1,
+      timedOut: false,
+      branchCheckedOut: true,
+      codexStarted: true,
+      normalExit: false
     });
     expect(reporter.reportFailure).toHaveBeenCalledWith(
       expect.objectContaining({ id: "auto-1" }),
-      { stdout: "out", stderr: "boom", exitCode: 1 }
+      expect.objectContaining({ stdout: "out", stderr: "boom", exitCode: 1 })
     );
     expect(agentService.markIdle).toHaveBeenCalledWith("agent-1");
+  });
+
+  it("marks task failed when branch checkout fails inside the project directory", async () => {
+    const task = createTask({ id: "auto-1", status: "queued" });
+    const agent = createAgent({ id: "agent-1" });
+    const taskService = createTaskService([task]);
+    const agentService = createAgentService([agent]);
+    const runner = createRunner({
+      stage: "checkout",
+      exitCode: 128,
+      stdout: "",
+      stderr: "pathspec did not match",
+      timedOut: false,
+      branchCheckedOut: false,
+      codexStarted: false
+    });
+    const executionLogService = createExecutionLogService();
+    const service = new OrchestratorService(
+      taskService as never,
+      agentService as never,
+      executionLogService as never,
+      runner as never,
+      createResultReporter() as never
+    );
+
+    await service.poll();
+
+    expect(taskService.markFailedInternal).toHaveBeenCalledWith(
+      "auto-1",
+      "Branch checkout failed in project directory",
+      expect.objectContaining({
+        stage: "checkout",
+        exitCode: 128,
+        branchCheckedOut: false,
+        codexStarted: false,
+        containerCwd: "/workspace/demo/repo"
+      })
+    );
   });
 
   it("releases agent even when result reporting fails", async () => {
@@ -158,9 +254,11 @@ describe("OrchestratorService", () => {
       }),
       reportFailure: jest.fn(async () => undefined)
     };
+    const executionLogService = createExecutionLogService();
     const service = new OrchestratorService(
       taskService as never,
       agentService as never,
+      executionLogService as never,
       runner as never,
       reporter as never
     );
@@ -177,9 +275,11 @@ describe("OrchestratorService", () => {
     const taskService = createTaskService([task]);
     const agentService = createAgentService([agent]);
     const runner = createRunner({ exitCode: 0, stdout: "ok", stderr: "" });
+    const executionLogService = createExecutionLogService();
     const service = new OrchestratorService(
       taskService as never,
       agentService as never,
+      executionLogService as never,
       runner as never,
       createResultReporter() as never
     );
@@ -191,7 +291,7 @@ describe("OrchestratorService", () => {
   });
 
   it("skips overlapping poll while a previous poll is still running", async () => {
-    let resolveRun: (value: { exitCode: number; stdout: string; stderr: string }) => void = () => undefined;
+    let resolveRun: (value: CodexRunResult) => void = () => undefined;
     let markRunStarted: () => void = () => undefined;
     const runStarted = new Promise<void>((resolve) => {
       markRunStarted = resolve;
@@ -201,11 +301,21 @@ describe("OrchestratorService", () => {
     const taskService = createTaskService([task]);
     const agentService = createAgentService([agent]);
     const runner = {
+      getExecutionContext: jest.fn(
+        (task: Task): CodexExecutionContext => ({
+          repo: task.repo,
+          branch: task.branch,
+          hostCwd: `${process.cwd()}/${task.repo}`,
+          containerCwd: `/workspace/${task.repo}`,
+          cloneUrl: null,
+          isAbsolutePath: false
+        })
+      ),
       run: jest.fn(
         () => {
           markRunStarted();
           return (
-          new Promise<{ exitCode: number; stdout: string; stderr: string }>((resolve) => {
+          new Promise<CodexRunResult>((resolve) => {
             resolveRun = resolve;
           })
           );
@@ -215,6 +325,7 @@ describe("OrchestratorService", () => {
     const service = new OrchestratorService(
       taskService as never,
       agentService as never,
+      createExecutionLogService() as never,
       runner as never,
       createResultReporter() as never
     );
@@ -222,7 +333,19 @@ describe("OrchestratorService", () => {
     const firstPoll = service.poll();
     await runStarted;
     await service.poll();
-    resolveRun({ exitCode: 0, stdout: "ok", stderr: "" });
+    resolveRun({
+      stage: "codex",
+      exitCode: 0,
+      stdout: "ok",
+      stderr: "",
+      timedOut: false,
+      branchCheckedOut: true,
+      codexStarted: true,
+      repo: task.repo,
+      branch: task.branch,
+      hostCwd: `${process.cwd()}/${task.repo}`,
+      containerCwd: `/workspace/${task.repo}`
+    });
     await firstPoll;
 
     expect(agentService.detectOfflineAgents).toHaveBeenCalledTimes(1);
@@ -239,6 +362,7 @@ describe("OrchestratorService", () => {
     const service = new OrchestratorService(
       taskService as never,
       agentService as never,
+      createExecutionLogService() as never,
       runner as never,
       createResultReporter() as never
     );
@@ -304,9 +428,37 @@ function createAgentService(agents: Agent[]) {
   };
 }
 
-function createRunner(result: { exitCode: number; stdout: string; stderr: string }) {
+function createExecutionLogService() {
   return {
-    run: jest.fn(async () => result)
+    append: jest.fn(async () => undefined)
+  };
+}
+
+function createRunner(
+  result: Partial<CodexRunResult> & Pick<CodexRunResult, "exitCode" | "stdout" | "stderr">
+) {
+  return {
+    getExecutionContext: jest.fn(
+      (task: Task): CodexExecutionContext => ({
+        repo: task.repo,
+        branch: task.branch,
+        hostCwd: `${process.cwd()}/${task.repo}`,
+        containerCwd: `/workspace/${task.repo}`,
+        cloneUrl: null,
+        isAbsolutePath: false
+      })
+    ),
+    run: jest.fn(async (task: Task) => ({
+      stage: "codex",
+      timedOut: false,
+      branchCheckedOut: true,
+      codexStarted: true,
+      repo: task.repo,
+      branch: task.branch,
+      hostCwd: `${process.cwd()}/${task.repo}`,
+      containerCwd: `/workspace/${task.repo}`,
+      ...result
+    }))
   };
 }
 

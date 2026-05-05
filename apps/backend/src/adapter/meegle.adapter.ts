@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { resolveExecutionBranch } from "../tasks/task-branch";
 import { RawMeegleTask } from "./task-mapper";
 
 const execFileAsync = promisify(execFile);
@@ -488,7 +489,7 @@ export class MeegleAdapter {
       return {
         ...task,
         repo: task.repo?.trim() || parsed.localPath || parsed.repo,
-        branch: task.branch?.trim() || parsed.branch || "main",
+        branch: resolveExecutionBranch(task.branch?.trim() || parsed.branch),
         instruction: task.instruction?.trim() || parsed.instruction
       };
     } catch {

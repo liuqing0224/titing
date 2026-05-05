@@ -170,4 +170,27 @@ describe("AdapterService", () => {
 
     await expect(service.sync()).rejects.toThrow("Meegle login required");
   });
+
+  it("generates a feature branch when synced task has no branch", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-05-05T21:01:02.000Z"));
+    const repository = createRepository();
+    const service = new AdapterService(
+      repository as never,
+      createLogService() as never,
+      createMeegleAdapter([
+        {
+          id: "MEEGLE-1",
+          title: "Missing branch",
+          repo: "demo/repo",
+          branch: "",
+          instruction: "Implement it"
+        }
+      ]) as never
+    );
+
+    await service.sync();
+
+    expect(Array.from(repository.store.values())[0]?.branch).toBe("feature/20260506050102");
+    jest.useRealTimers();
+  });
 });

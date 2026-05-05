@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { AgentService } from "../agents/agent.service";
+import { ExecutionLogService } from "../execution-logs/execution-log.service";
 import { Task } from "../tasks/task.entity";
 import { TaskService } from "../tasks/task.service";
 import { hasValidExecutionFields } from "../tasks/task-status";
@@ -20,6 +21,7 @@ export class OrchestratorService {
   constructor(
     private readonly taskService: TaskService,
     private readonly agentService: AgentService,
+    private readonly executionLogService: ExecutionLogService,
     private readonly codexRunner: CodexRunner,
     private readonly resultReporter: ResultReporterService
   ) {}
@@ -94,21 +96,32 @@ export class OrchestratorService {
     task: Task,
     agent: NonNullable<Awaited<ReturnType<AgentService["findIdleAgent"]>>>
   ): Promise<void> {
+    const executionContext = this.codexRunner.getExecutionContext(task);
+    await this.executionLogService.append({
+      taskId: task.id,
+      agentId: agent.id,
+      status: "running",
+      message: "Preparing project workspace for branch checkout and Codex execution",
+      metadata: this.buildExecutionMetadata(executionContext)
+    });
     await this.agentService.refreshHeartbeat(agent.id);
     const result = await this.codexRunner.run(task, agent);
     await this.agentService.refreshHeartbeat(agent.id);
-    const metadata = {
-      stdout: result.stdout,
-      stderr: result.stderr,
-      exitCode: result.exitCode
-    };
+    const metadata = this.buildExecutionMetadata(result);
 
     try {
       if (result.exitCode === 0) {
+        await this.executionLogService.append({
+          taskId: task.id,
+          agentId: agent.id,
+          status: "running",
+          message: "Codex exited normally",
+          metadata
+        });
         await this.taskService.markDoneInternal(task.id, metadata);
         await this.ignoreReporterFailure(this.resultReporter.reportSuccess(task, result));
       } else {
-        await this.taskService.markFailedInternal(task.id, "Codex command failed", metadata);
+        await this.taskService.markFailedInternal(task.id, this.getFailureMessage(result), metadata);
         await this.ignoreReporterFailure(this.resultReporter.reportFailure(task, result));
       }
     } finally {
@@ -135,8 +148,44 @@ export class OrchestratorService {
   private getMissingExecutionFields(task: Task): string[] {
     return [
       task.repo?.trim() ? null : "repo",
-      task.branch?.trim() ? null : "branch",
       task.instruction?.trim() ? null : "instruction"
     ].filter((field): field is string => Boolean(field));
+  }
+
+  private buildExecutionMetadata(
+    execution: ReturnType<CodexRunner["getExecutionContext"]> | Awaited<ReturnType<CodexRunner["run"]>>
+  ): Record<string, unknown> {
+    return {
+      repo: execution.repo,
+      branch: execution.branch,
+      hostCwd: execution.hostCwd,
+      containerCwd: execution.containerCwd,
+      ...("cloneUrl" in execution ? { cloneUrl: execution.cloneUrl } : {}),
+      ...("stage" in execution
+        ? {
+            stage: execution.stage,
+            exitCode: execution.exitCode,
+            stdout: execution.stdout,
+            stderr: execution.stderr,
+            timedOut: execution.timedOut,
+            branchCheckedOut: execution.branchCheckedOut,
+            codexStarted: execution.codexStarted,
+            normalExit: execution.exitCode === 0 && execution.stage === "codex"
+          }
+        : {})
+    };
+  }
+
+  private getFailureMessage(result: Awaited<ReturnType<CodexRunner["run"]>>): string {
+    if (result.stage === "clone") {
+      return "Repository clone failed";
+    }
+    if (result.stage === "checkout") {
+      return "Branch checkout failed in project directory";
+    }
+    if (result.timedOut) {
+      return "Codex timed out";
+    }
+    return "Codex exited abnormally";
   }
 }

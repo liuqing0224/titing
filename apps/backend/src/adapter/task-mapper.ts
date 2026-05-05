@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Task, TaskPriority, TaskType } from "../tasks/task.entity";
+import { resolveExecutionBranch } from "../tasks/task-branch";
 
 export type RawMeegleTask = {
   id: string;
@@ -20,7 +21,7 @@ export function mapRawTaskToTaskInput(raw: RawMeegleTask): Partial<Task> {
     title: raw.title,
     description: raw.description ?? null,
     repo: raw.repo ?? "",
-    branch: raw.branch ?? "main",
+    branch: resolveExecutionBranch(raw.branch),
     instruction: raw.instruction ?? null,
     priority: mapPriority(raw.priority),
     taskType: inferTaskType(raw.title),

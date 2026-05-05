@@ -3,6 +3,7 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { EventsService } from "../events/events.service";
 import { ExecutionLogService } from "../execution-logs/execution-log.service";
+import { resolveExecutionBranch } from "./task-branch";
 import { Task, TaskPriority, TaskStatus } from "./task.entity";
 import { hasValidExecutionFields, TERMINAL_TASK_STATUSES } from "./task-status";
 
@@ -54,6 +55,7 @@ export class TaskService {
       throw new BadRequestException(`Only pending tasks can be enqueued`);
     }
 
+    task.branch = resolveExecutionBranch(task.branch);
     task.status = "queued";
     const saved = await this.taskRepository.save(task);
     await this.executionLogService.append({
@@ -103,7 +105,7 @@ export class TaskService {
       task.repo = input.repo;
     }
     if (input.branch !== undefined) {
-      task.branch = input.branch;
+      task.branch = resolveExecutionBranch(input.branch);
     }
     if (input.instruction !== undefined) {
       task.instruction = input.instruction;
@@ -247,7 +249,6 @@ export class TaskService {
   private getMissingExecutionFields(task: Task): string[] {
     return [
       task.repo?.trim() ? null : "repo",
-      task.branch?.trim() ? null : "branch",
       task.instruction?.trim() ? null : "instruction"
     ].filter((field): field is string => Boolean(field));
   }

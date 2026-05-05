@@ -64,16 +64,24 @@ describe("CodexRunner", () => {
       "-C",
       "/workspace/demo/repo",
       "--dangerously-bypass-approvals-and-sandbox",
-      "Implement the feature"
+      buildExpectedInstruction("Implement the feature")
     ], {
       cwd: "/tmp/workspace/demo/repo",
       maxBuffer: 20 * 1024 * 1024,
       timeout: 12345
     });
     expect(result).toEqual({
+      stage: "codex",
       exitCode: 0,
       stdout: "created files",
-      stderr: ""
+      stderr: "",
+      timedOut: false,
+      branchCheckedOut: true,
+      codexStarted: true,
+      repo: "demo/repo",
+      branch: "feature/demo",
+      hostCwd: "/tmp/workspace/demo/repo",
+      containerCwd: "/workspace/demo/repo"
     });
   });
 
@@ -95,9 +103,17 @@ describe("CodexRunner", () => {
     const result = await runner.run(createTask(), createAgent());
 
     expect(result).toEqual({
+      stage: "codex",
       exitCode: 7,
       stdout: "partial output",
-      stderr: "fatal error"
+      stderr: "fatal error",
+      timedOut: false,
+      branchCheckedOut: true,
+      codexStarted: true,
+      repo: "demo/repo",
+      branch: "feature/demo",
+      hostCwd: `${process.cwd()}/demo/repo`,
+      containerCwd: "/workspace/demo/repo"
     });
   });
 
@@ -119,8 +135,10 @@ describe("CodexRunner", () => {
 
     const result = await runner.run(createTask(), createAgent());
 
+    expect(result.stage).toBe("codex");
     expect(result.exitCode).toBe(124);
     expect(result.stderr).toContain("timed out");
+    expect(result.timedOut).toBe(true);
   });
 
   it("uses absolute repo paths directly when the task points at a host checkout", async () => {
@@ -149,6 +167,22 @@ describe("CodexRunner", () => {
       "git",
       "checkout",
       "main"
+    ], {
+      cwd: "/Users/l/Documents/work/code/demo/AutoFlow/project-a",
+      maxBuffer: 20 * 1024 * 1024,
+      timeout: 1800000
+    });
+    expect(processRunner.run).toHaveBeenNthCalledWith(2, "/usr/bin/docker", [
+      "exec",
+      "-w",
+      "/Users/l/Documents/work/code/demo/AutoFlow/project-a",
+      "agent-1",
+      "codex",
+      "exec",
+      "-C",
+      "/Users/l/Documents/work/code/demo/AutoFlow/project-a",
+      "--dangerously-bypass-approvals-and-sandbox",
+      buildExpectedInstruction("Do work")
     ], {
       cwd: "/Users/l/Documents/work/code/demo/AutoFlow/project-a",
       maxBuffer: 20 * 1024 * 1024,
@@ -219,7 +253,7 @@ describe("CodexRunner", () => {
       "-C",
       "/workspace/frontend/yanxue-main",
       "--dangerously-bypass-approvals-and-sandbox",
-      "Do work"
+      buildExpectedInstruction("Do work")
     ], {
       cwd: "/tmp/autodev-agent/workspaces/frontend/yanxue-main",
       maxBuffer: 20 * 1024 * 1024,
@@ -229,4 +263,90 @@ describe("CodexRunner", () => {
     existsSpy.mockRestore();
     mkdirSpy.mockRestore();
   });
+
+  it("exposes resolved execution context for remote repositories", () => {
+    const runner = new CodexRunner(
+      createConfigService({
+        CODEX_WORKDIR: "/tmp/autodev-agent/workspaces"
+      }) as never
+    );
+
+    expect(
+      runner.getExecutionContext(
+        createTask({
+          repo: "git@gitlab.yc345.tv:frontend/yanxue-main.git",
+          branch: "release/1.0"
+        })
+      )
+    ).toEqual({
+      repo: "git@gitlab.yc345.tv:frontend/yanxue-main.git",
+      branch: "release/1.0",
+      hostCwd: "/tmp/autodev-agent/workspaces/frontend/yanxue-main",
+      containerCwd: "/workspace/frontend/yanxue-main",
+      cloneUrl: "git@gitlab.yc345.tv:frontend/yanxue-main.git",
+      isAbsolutePath: false
+    });
+  });
+
+  it("creates the branch when checkout fails because it does not exist yet", async () => {
+    const processRunner = {
+      run: jest
+        .fn()
+        .mockImplementationOnce(async () => {
+          throw Object.assign(new Error("pathspec not found"), {
+            code: 1,
+            stderr: "pathspec not found"
+          });
+        })
+        .mockResolvedValueOnce({ stdout: "Switched to a new branch", stderr: "" })
+        .mockResolvedValueOnce({ stdout: "ok", stderr: "" })
+    };
+    const runner = new CodexRunner(createConfigService({}) as never, processRunner);
+
+    const result = await runner.run(createTask({ branch: "feature/20260505210101" }), createAgent());
+
+    expect(processRunner.run).toHaveBeenNthCalledWith(2, "/usr/bin/docker", [
+      "exec",
+      "-w",
+      "/workspace/demo/repo",
+      "agent-1",
+      "git",
+      "checkout",
+      "-b",
+      "feature/20260505210101"
+    ], {
+      cwd: `${process.cwd()}/demo/repo`,
+      maxBuffer: 20 * 1024 * 1024,
+      timeout: 1800000
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("generates a feature branch name when the task branch is empty", () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-05-05T21:01:02.000Z"));
+    const runner = new CodexRunner(createConfigService({}) as never);
+
+    expect(runner.getExecutionContext(createTask({ branch: "   " }))).toEqual(
+      expect.objectContaining({
+        branch: "feature/20260506050102"
+      })
+    );
+
+    jest.useRealTimers();
+  });
 });
+
+function buildExpectedInstruction(instruction: string): string {
+  return [
+    "YOLO execution mode.",
+    "First produce a concise internal execution checklist based on the task, then immediately execute every checklist item end-to-end.",
+    "Do not ask the user any clarifying questions.",
+    "Do not pause for approval, design review, or confirmation.",
+    "Do not use brainstorming or approval-gated workflows from the repository.",
+    "If details are missing, make reasonable assumptions, keep public APIs stable where possible, and continue.",
+    "You must modify code and tests directly when needed, verify your work, and then return a brief final summary.",
+    "",
+    "Task:",
+    instruction
+  ].join("\n");
+}

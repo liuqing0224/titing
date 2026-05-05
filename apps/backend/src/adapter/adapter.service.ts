@@ -3,6 +3,7 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { EventsService } from "../events/events.service";
 import { ExecutionLogService } from "../execution-logs/execution-log.service";
+import { resolveExecutionBranch } from "../tasks/task-branch";
 import { Task } from "../tasks/task.entity";
 import { hasValidExecutionFields } from "../tasks/task-status";
 import { MeegleAdapter, MeegleLoginPollInput } from "./meegle.adapter";
@@ -81,7 +82,7 @@ export class AdapterService {
       title: input.title,
       description: input.description,
       repo: input.repo,
-      branch: input.branch,
+      branch: resolveExecutionBranch(input.branch),
       instruction: input.instruction,
       priority: input.priority,
       taskType: input.taskType
@@ -193,13 +194,12 @@ export class AdapterService {
       agentId: task.agentId,
       status: "failed",
       message: "Task execution fields are invalid",
-      metadata: {
-        missingFields: [
-          task.repo?.trim() ? null : "repo",
-          task.branch?.trim() ? null : "branch",
-          task.instruction?.trim() ? null : "instruction"
-        ].filter(Boolean)
-      }
+        metadata: {
+          missingFields: [
+            task.repo?.trim() ? null : "repo",
+            task.instruction?.trim() ? null : "instruction"
+          ].filter(Boolean)
+        }
     });
   }
 

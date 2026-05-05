@@ -1,4 +1,5 @@
 import { Task } from "../tasks/task.entity";
+import { CodexRunResult } from "./codex-runner";
 import { ResultReporterService } from "./result-reporter.service";
 
 const createTask = (overrides: Partial<Task> = {}): Task =>
@@ -16,11 +17,7 @@ describe("ResultReporterService", () => {
     };
     const reporter = new ResultReporterService(meegleAdapter as never);
 
-    await reporter.reportSuccess(createTask(), {
-      stdout: "created PR",
-      stderr: "",
-      exitCode: 0
-    });
+    await reporter.reportSuccess(createTask(), createResult({ stdout: "created PR", stderr: "", exitCode: 0 }));
 
     expect(meegleAdapter.addComment).toHaveBeenCalledWith(
       "MEEGLE-1",
@@ -34,11 +31,7 @@ describe("ResultReporterService", () => {
     };
     const reporter = new ResultReporterService(meegleAdapter as never);
 
-    await reporter.reportFailure(createTask(), {
-      stdout: "partial",
-      stderr: "boom",
-      exitCode: 1
-    });
+    await reporter.reportFailure(createTask(), createResult({ stdout: "partial", stderr: "boom", exitCode: 1 }));
 
     expect(meegleAdapter.addComment).toHaveBeenCalledWith(
       "MEEGLE-1",
@@ -52,12 +45,24 @@ describe("ResultReporterService", () => {
     };
     const reporter = new ResultReporterService(meegleAdapter as never);
 
-    await reporter.reportSuccess(createTask({ externalId: null }), {
-      stdout: "ok",
-      stderr: "",
-      exitCode: 0
-    });
+    await reporter.reportSuccess(createTask({ externalId: null }), createResult({ stdout: "ok", stderr: "", exitCode: 0 }));
 
     expect(meegleAdapter.addComment).not.toHaveBeenCalled();
   });
 });
+
+function createResult(
+  overrides: Pick<CodexRunResult, "stdout" | "stderr" | "exitCode">
+): CodexRunResult {
+  return {
+    ...overrides,
+    stage: "codex",
+    timedOut: false,
+    branchCheckedOut: true,
+    codexStarted: true,
+    repo: "demo/repo",
+    branch: "main",
+    hostCwd: "/tmp/demo/repo",
+    containerCwd: "/workspace/demo/repo"
+  };
+}
