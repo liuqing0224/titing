@@ -56,13 +56,15 @@ function createResult(
 ): CodexRunResult {
   return {
     ...overrides,
-    stage: "codex",
+    stage: "execute",
     timedOut: false,
     branchCheckedOut: true,
     codexStarted: true,
     repo: "demo/repo",
     branch: "main",
     hostCwd: "/tmp/demo/repo",
-    containerCwd: "/workspace/demo/repo"
+    containerCwd: "/workspace/demo/repo",
+    agentsMdPath: "/workspace/demo/repo/AGENTS.md",
+    workflowPromptsPath: "/workspace/demo/repo/knowledge/WORKFLOW_PROMPTS.md"
   };
 }

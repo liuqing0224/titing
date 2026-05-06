@@ -10,7 +10,7 @@ import { Task } from "../tasks/task.entity";
 
 const execFileAsync = promisify(execFile);
 
-export type CodexRunStage = "clone" | "checkout" | "agents-md" | "execute";
+export type CodexRunStage = "clone" | "checkout" | "workflow-prompts" | "execute";
 
 export type CodexExecutionContext = {
   repo: string;
@@ -76,7 +76,7 @@ class ExecFileProcessRunner implements ProcessRunner {
 @Injectable()
 export class CodexRunner {
   private readonly maxBuffer = 20 * 1024 * 1024;
-  private readonly agentsDefaultWorkflowHeading = "## Agents 默认执行流程";
+  private readonly defaultWorkflowHeading = "## Agents 默认执行流程";
   private readonly logger = new Logger(CodexRunner.name);
 
   constructor(
@@ -159,10 +159,12 @@ export class CodexRunner {
     }
 
     try {
-      this.logger.log(`Task ${task.id}: validating AGENTS.md at ${executionContext.agentsMdPath}`);
-      await this.ensureAgentsMdExists(dockerBin, agent, executionContext, timeout);
+      this.logger.log(
+        `Task ${task.id}: validating WORKFLOW_PROMPTS.md near ${executionContext.workflowPromptsPath}`
+      );
+      await this.ensureWorkflowPromptsExists(dockerBin, agent, executionContext, timeout);
     } catch (error) {
-      return this.buildFailureResult("agents-md", error, executionContext, {
+      return this.buildFailureResult("workflow-prompts", error, executionContext, {
         branchCheckedOut: true,
         codexStarted: false,
         stdout: "",
@@ -179,7 +181,7 @@ export class CodexRunner {
           .join(" -> ")}`
       );
     } catch (error) {
-      return this.buildFailureResult("agents-md", error, executionContext, {
+      return this.buildFailureResult("workflow-prompts", error, executionContext, {
         branchCheckedOut: true,
         codexStarted: false,
         stdout: "",
@@ -190,18 +192,18 @@ export class CodexRunner {
     let aggregatedStdout = "";
     let aggregatedStderr = "";
     try {
-      const maxWorkflowPasses = this.getWorkflowMaxPasses(workflowNodes);
-      this.logger.log(`Task ${task.id}: workflow max passes resolved to ${maxWorkflowPasses}`);
-      let pass = 1;
-      while (pass <= maxWorkflowPasses) {
-        const nodesForPass = this.getWorkflowNodesForPass(workflowNodes, pass);
-        this.logger.log(
-          `Task ${task.id}: starting pass ${pass}/${maxWorkflowPasses} with nodes [${nodesForPass
-            .map((node) => node.name)
-            .join(", ")}]`
-        );
-        for (const node of nodesForPass) {
-          this.logger.log(`Task ${task.id}: pass ${pass} executing node ${node.name}`);
+      this.logger.log(
+        `Task ${task.id}: starting workflow with node-local loops [${workflowNodes
+          .map((node) => `${node.name} x${node.loopEnabled ? node.maxLoops : 1}`)
+          .join(", ")}]`
+      );
+
+      for (const node of workflowNodes) {
+        const loopCount = node.loopEnabled ? node.maxLoops : 1;
+        for (let loopIndex = 1; loopIndex <= loopCount; loopIndex += 1) {
+          this.logger.log(
+            `Task ${task.id}: executing node ${node.name} iteration ${loopIndex}/${loopCount}`
+          );
           const executeResult = await this.processRunner.run(
             dockerBin,
             [
@@ -217,41 +219,29 @@ export class CodexRunner {
               timeout
             }
           );
-          const labelPrefix = pass > 1 ? `Pass ${pass} ` : "";
-          aggregatedStdout = this.mergeOutput(aggregatedStdout, `${labelPrefix}${node.name} stdout`, executeResult.stdout);
-          aggregatedStderr = this.mergeOutput(aggregatedStderr, `${labelPrefix}${node.name} stderr`, executeResult.stderr);
+          const labelPrefix = loopCount > 1 ? `${node.name} iteration ${loopIndex}/${loopCount}` : `${node.name}`;
+          aggregatedStdout = this.mergeOutput(aggregatedStdout, `${labelPrefix} stdout`, executeResult.stdout);
+          aggregatedStderr = this.mergeOutput(aggregatedStderr, `${labelPrefix} stderr`, executeResult.stderr);
           this.logger.log(
-            `Task ${task.id}: pass ${pass} node ${node.name} completed (stdout=${executeResult.stdout.length}, stderr=${executeResult.stderr.length})`
+            `Task ${task.id}: node ${node.name} iteration ${loopIndex}/${loopCount} completed (stdout=${executeResult.stdout.length}, stderr=${executeResult.stderr.length})`
           );
         }
+      }
 
-        if (!this.shouldLoopUntilTasksComplete(workflowNodes)) {
-          this.logger.log(`Task ${task.id}: workflow has no loop-enabled nodes, stopping after pass ${pass}`);
-          break;
-        }
-
+      if (this.shouldLoopUntilTasksComplete(workflowNodes)) {
         const completionStatus = this.getWorkflowCompletionStatus(executionContext);
         this.logger.log(
-          `Task ${task.id}: pass ${pass} completion check => completed=${completionStatus.completed}, reason=${completionStatus.reason}`
+          `Task ${task.id}: workflow completion check => completed=${completionStatus.completed}, reason=${completionStatus.reason}`
         );
-        if (completionStatus.completed) {
-          break;
-        }
-        if (pass >= maxWorkflowPasses) {
-          this.logger.warn(
-            `Task ${task.id}: reached max workflow passes ${maxWorkflowPasses} without completion`
+        if (!completionStatus.completed) {
+          aggregatedStderr = this.mergeOutput(
+            aggregatedStderr,
+            "Workflow completion check",
+            completionStatus.reason
           );
-          throw new Error(
-            `Workflow incomplete after ${maxWorkflowPasses} passes: ${completionStatus.reason}`
-          );
+          this.logger.warn(`Task ${task.id}: node-local loops exhausted without completion`);
+          throw new Error(`Workflow incomplete after node-local loops: ${completionStatus.reason}`);
         }
-
-        aggregatedStderr = this.mergeOutput(
-          aggregatedStderr,
-          `Pass ${pass} completion check`,
-          completionStatus.reason
-        );
-        pass += 1;
       }
 
       return {
@@ -403,26 +393,17 @@ export class CodexRunner {
     };
   }
 
-  private extractAgentsDefaultWorkflow(hostCwd: string): string {
-    const agentsMdPath = path.join(hostCwd, "AGENTS.md");
-    const content = fs.readFileSync(agentsMdPath, "utf8");
-    return this.extractAgentsDefaultWorkflowFromContent(content);
-  }
-
-  private extractAgentsDefaultWorkflowFromContent(content: string): string {
-    return this.extractMarkdownSection(content, this.agentsDefaultWorkflowHeading, "AGENTS.md");
-  }
-
   private buildWorkflowNodes(task: Task, executionContext: CodexExecutionContext): WorkflowNode[] {
-    const { agentsDefaultWorkflow, workflowPromptsContent, resolvedWorkflowPromptsPath } =
-      this.loadWorkflowDefinitions(executionContext.hostCwd);
+    const { workflowPromptsContent, resolvedWorkflowPromptsPath } = this.loadWorkflowDefinitions(
+      executionContext.hostCwd
+    );
     executionContext.workflowPromptsPath = path.posix.join(
       executionContext.containerCwd,
       path.relative(executionContext.hostCwd, resolvedWorkflowPromptsPath).split(path.sep).join("/")
     );
-    const orderedNodeNames = this.resolveOrderedWorkflowNodeNames(agentsDefaultWorkflow, workflowPromptsContent);
+    const orderedNodeNames = this.resolveOrderedWorkflowNodeNames(workflowPromptsContent);
     if (orderedNodeNames.length === 0) {
-      throw new Error("No workflow nodes found in AGENTS.md default workflow section");
+      throw new Error("No workflow nodes found in WORKFLOW_PROMPTS.md default workflow section");
     }
 
     const variables = this.buildWorkflowVariables(task, executionContext);
@@ -434,44 +415,33 @@ export class CodexRunner {
   }
 
   private loadWorkflowDefinitions(hostCwd: string): {
-    agentsDefaultWorkflow: string;
     workflowPromptsContent: string;
     resolvedWorkflowPromptsPath: string;
   } {
-    const agentsMdPath = path.join(hostCwd, "AGENTS.md");
-    const agentsContent = fs.readFileSync(agentsMdPath, "utf8");
-    const agentsDefaultWorkflow = this.extractAgentsDefaultWorkflowFromContent(agentsContent);
-    const candidates = this.extractWorkflowPromptsCandidates(agentsContent, hostCwd);
+    const candidates = this.extractWorkflowPromptsCandidates(hostCwd);
     for (const candidate of candidates) {
       if (fs.existsSync(candidate)) {
         return {
-          agentsDefaultWorkflow,
           workflowPromptsContent: fs.readFileSync(candidate, "utf8"),
           resolvedWorkflowPromptsPath: candidate
         };
       }
     }
 
-    throw new Error(`Unable to locate WORKFLOW_PROMPTS.md from AGENTS.md in ${hostCwd}`);
+    throw new Error(`Unable to locate WORKFLOW_PROMPTS.md in ${hostCwd}`);
   }
 
-  private extractWorkflowPromptsCandidates(agentsContent: string, hostCwd: string): string[] {
-    const matches = Array.from(agentsContent.matchAll(/\[WORKFLOW_PROMPTS\]\(([^)]+)\)/g)).map((match) => match[1]);
-    const candidates = matches.map((relativePath) => path.join(hostCwd, relativePath));
-    candidates.push(path.join(hostCwd, "WORKFLOW_PROMPTS.md"));
+  private extractWorkflowPromptsCandidates(hostCwd: string): string[] {
+    const candidates = [];
     candidates.push(path.join(hostCwd, "knowledge", "WORKFLOW_PROMPTS.md"));
+    candidates.push(path.join(hostCwd, "WORKFLOW_PROMPTS.md"));
     return Array.from(new Set(candidates));
   }
 
-  private resolveOrderedWorkflowNodeNames(agentsDefaultWorkflow: string, workflowPromptsContent: string): string[] {
-    const agentsNodes = this.extractOrderedWorkflowNodeNames(agentsDefaultWorkflow);
-    if (agentsNodes.length > 0) {
-      return agentsNodes;
-    }
-
+  private resolveOrderedWorkflowNodeNames(workflowPromptsContent: string): string[] {
     const promptWorkflowNodes = this.tryExtractOrderedWorkflowNodeNamesFromSection(
       workflowPromptsContent,
-      this.agentsDefaultWorkflowHeading
+      this.defaultWorkflowHeading
     );
     if (promptWorkflowNodes.length > 0) {
       return promptWorkflowNodes;
@@ -582,18 +552,6 @@ export class CodexRunner {
     return workflowNodes.some((node) => node.loopEnabled && node.maxLoops > 1);
   }
 
-  private getWorkflowMaxPasses(workflowNodes: WorkflowNode[]): number {
-    return workflowNodes.reduce((maxLoops, node) => Math.max(maxLoops, node.maxLoops), 1);
-  }
-
-  private getWorkflowNodesForPass(workflowNodes: WorkflowNode[], pass: number): WorkflowNode[] {
-    if (pass <= 1) {
-      return workflowNodes;
-    }
-
-    return workflowNodes.filter((node) => node.loopEnabled && node.maxLoops >= pass);
-  }
-
   private getWorkflowCompletionStatus(executionContext: CodexExecutionContext): WorkflowCompletionStatus {
     const taskResultPath = path.join(
       executionContext.hostCwd,
@@ -686,14 +644,13 @@ export class CodexRunner {
     containerCwd: string,
     instruction: string
   ): string[] {
-    const provider = this.configService.get<string>("CODEX_MODEL_PROVIDER", "rightcode");
-    const model = this.configService.get<string>("CODEX_MODEL", "gpt-5.4-medium");
-    const reasoningEffort = this.configService.get<string>("CODEX_MODEL_REASONING_EFFORT", "medium");
-    const baseUrl = this.configService.get<string>("CODEX_MODEL_BASE_URL", "https://right.codes/codex/v1");
-    const wireApi = this.configService.get<string>("CODEX_MODEL_WIRE_API", "responses");
-    const requiresOpenAiAuth = this.configService.get<string>("CODEX_MODEL_REQUIRES_OPENAI_AUTH", "true");
-
-    return [
+    const provider = this.configService.get<string | undefined>("CODEX_MODEL_PROVIDER", undefined);
+    const model = this.configService.get<string | undefined>("CODEX_MODEL", undefined);
+    const reasoningEffort = this.configService.get<string | undefined>(
+      "CODEX_MODEL_REASONING_EFFORT",
+      undefined
+    );
+    const args = [
       cliBin,
       "exec",
       "--ignore-user-config",
@@ -702,12 +659,30 @@ export class CodexRunner {
       "danger-full-access",
       "-C",
       containerCwd,
-      "-m",
-      model,
+      instruction
+    ];
+
+    if (model) {
+      args.splice(args.length - 1, 0, "-m", model);
+    }
+
+    if (reasoningEffort) {
+      args.splice(args.length - 1, 0, "-c", `model_reasoning_effort=${this.toTomlString(reasoningEffort)}`);
+    }
+
+    if (!provider) {
+      return args;
+    }
+
+    const baseUrl = this.configService.get<string>("CODEX_MODEL_BASE_URL", "https://right.codes/codex/v1");
+    const wireApi = this.configService.get<string>("CODEX_MODEL_WIRE_API", "responses");
+    const requiresOpenAiAuth = this.configService.get<string>("CODEX_MODEL_REQUIRES_OPENAI_AUTH", "true");
+
+    args.splice(
+      args.length - 1,
+      0,
       "-c",
       `model_provider=${this.toTomlString(provider)}`,
-      "-c",
-      `model_reasoning_effort=${this.toTomlString(reasoningEffort)}`,
       "-c",
       `model_providers.${provider}.name=${this.toTomlString(provider)}`,
       "-c",
@@ -715,16 +690,17 @@ export class CodexRunner {
       "-c",
       `model_providers.${provider}.wire_api=${this.toTomlString(wireApi)}`,
       "-c",
-      `model_providers.${provider}.requires_openai_auth=${requiresOpenAiAuth}`,
-      instruction
-    ];
+      `model_providers.${provider}.requires_openai_auth=${requiresOpenAiAuth}`
+    );
+
+    return args;
   }
 
   private toTomlString(value: string): string {
     return JSON.stringify(value);
   }
 
-  private async ensureAgentsMdExists(
+  private async ensureWorkflowPromptsExists(
     dockerBin: string,
     agent: Agent,
     executionContext: CodexExecutionContext,
@@ -732,7 +708,15 @@ export class CodexRunner {
   ): Promise<void> {
     await this.processRunner.run(
       dockerBin,
-      ["exec", "-w", executionContext.containerCwd, agent.containerName, "sh", "-lc", "test -s 'AGENTS.md'"],
+      [
+        "exec",
+        "-w",
+        executionContext.containerCwd,
+        agent.containerName,
+        "sh",
+        "-lc",
+        "test -s 'knowledge/WORKFLOW_PROMPTS.md' || test -s 'WORKFLOW_PROMPTS.md'"
+      ],
       {
         cwd: executionContext.hostCwd,
         maxBuffer: this.maxBuffer,

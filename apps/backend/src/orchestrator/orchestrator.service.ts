@@ -103,7 +103,7 @@ export class OrchestratorService {
       taskId: task.id,
       agentId: agent.id,
       status: "running",
-      message: "Preparing project workspace, validating AGENTS.md, and executing Codex",
+      message: "Preparing project workspace, validating WORKFLOW_PROMPTS.md, and executing Codex",
       metadata: this.buildExecutionMetadata(executionContext)
     });
     await this.agentService.refreshHeartbeat(agent.id);
@@ -129,7 +129,7 @@ export class OrchestratorService {
           taskId: task.id,
           agentId: agent.id,
           status: "running",
-          message: "AGENTS.md workflow executed and Codex exited normally",
+          message: "WORKFLOW_PROMPTS.md workflow executed and Codex exited normally",
           metadata
         });
         await this.taskService.markDoneInternal(task.id, metadata);
@@ -221,12 +221,12 @@ export class OrchestratorService {
     if (result.stage === "checkout") {
       return "Branch checkout failed in project directory";
     }
-    if (result.stage === "agents-md") {
-      return "Project root AGENTS.md is missing or empty";
+    if (result.stage === "workflow-prompts") {
+      return "Project WORKFLOW_PROMPTS.md is missing or invalid";
     }
     if (result.timedOut) {
       return "Codex timed out";
     }
-    return "Codex exited abnormally while following AGENTS.md workflow";
+    return "Codex exited abnormally while following WORKFLOW_PROMPTS.md workflow";
   }
 }

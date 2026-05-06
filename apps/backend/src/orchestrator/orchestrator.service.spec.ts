@@ -119,7 +119,7 @@ describe("OrchestratorService", () => {
         taskId: "auto-1",
         agentId: "agent-1",
         status: "running",
-        message: "Preparing project workspace, validating AGENTS.md, and executing Codex",
+        message: "Preparing project workspace, validating WORKFLOW_PROMPTS.md, and executing Codex",
         metadata: expect.objectContaining({
           repo: "demo/repo",
           branch: "main",
@@ -136,7 +136,7 @@ describe("OrchestratorService", () => {
         taskId: "auto-1",
         agentId: "agent-1",
         status: "running",
-        message: "AGENTS.md workflow executed and Codex exited normally",
+        message: "WORKFLOW_PROMPTS.md workflow executed and Codex exited normally",
         metadata: expect.objectContaining({
           stage: "execute",
           exitCode: 0,
@@ -191,7 +191,7 @@ describe("OrchestratorService", () => {
 
     expect(taskService.markFailedInternal).toHaveBeenCalledWith(
       "auto-1",
-      "Codex exited abnormally while following AGENTS.md workflow",
+      "Codex exited abnormally while following WORKFLOW_PROMPTS.md workflow",
       {
         repo: "demo/repo",
         branch: "main",
@@ -254,16 +254,16 @@ describe("OrchestratorService", () => {
     );
   });
 
-  it("marks task failed when AGENTS.md is missing", async () => {
+  it("marks task failed when WORKFLOW_PROMPTS.md is missing", async () => {
     const task = createTask({ id: "auto-1", status: "queued" });
     const agent = createAgent({ id: "agent-1" });
     const taskService = createTaskService([task]);
     const agentService = createAgentService([agent]);
     const runner = createRunner({
-      stage: "agents-md",
+      stage: "workflow-prompts",
       exitCode: 1,
       stdout: "",
-      stderr: "agents-md stderr:\nmissing AGENTS.md",
+      stderr: "workflow-prompts stderr:\nmissing WORKFLOW_PROMPTS.md",
       timedOut: false,
       branchCheckedOut: true,
       codexStarted: false
@@ -281,9 +281,9 @@ describe("OrchestratorService", () => {
 
     expect(taskService.markFailedInternal).toHaveBeenCalledWith(
       "auto-1",
-      "Project root AGENTS.md is missing or empty",
+      "Project WORKFLOW_PROMPTS.md is missing or invalid",
       expect.objectContaining({
-        stage: "agents-md",
+        stage: "workflow-prompts",
         exitCode: 1,
         branchCheckedOut: true,
         codexStarted: false,

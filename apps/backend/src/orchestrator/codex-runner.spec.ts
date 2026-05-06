@@ -24,15 +24,6 @@ const createAgent = (): Agent =>
   }) as Agent;
 
 describe("CodexRunner", () => {
-  const agentsContent = [
-    "# Demo",
-    "",
-    "## Agents 默认执行流程",
-    "默认执行流程与 v2 节点 Prompt 模板见 [WORKFLOW_PROMPTS](knowledge/WORKFLOW_PROMPTS.md)。",
-    "",
-    "## Other"
-  ].join("\n");
-
   const workflowPromptsContent = [
     "# Workflow",
     "",
@@ -80,9 +71,6 @@ describe("CodexRunner", () => {
     });
     jest.spyOn(fs, "readFileSync").mockImplementation((filePath: fs.PathOrFileDescriptor) => {
       const pathValue = String(filePath);
-      if (pathValue.endsWith("/AGENTS.md")) {
-        return agentsContent;
-      }
       if (pathValue.endsWith("/knowledge/WORKFLOW_PROMPTS.md") || pathValue.endsWith("/WORKFLOW_PROMPTS.md")) {
         return workflowPromptsContent;
       }
@@ -107,7 +95,9 @@ describe("CodexRunner", () => {
       createConfigService({
         CODEX_CLI_BIN: "codex-dev",
         CODEX_WORKDIR: "/tmp/workspace",
-        CODEX_TIMEOUT_MS: "12345"
+        CODEX_TIMEOUT_MS: "12345",
+        CODEX_MODEL: "gpt-5.4-medium",
+        CODEX_MODEL_REASONING_EFFORT: "medium"
       }) as never,
       processRunner
     );
@@ -123,15 +113,20 @@ describe("CodexRunner", () => {
       "checkout",
       "feature/demo"
     ], expect.any(Object));
-    expect(processRunner.run).toHaveBeenNthCalledWith(2, "/usr/bin/docker", [
-      "exec",
-      "-w",
-      "/workspace/demo/repo",
-      "agent-1",
-      "sh",
-      "-lc",
-      "test -s 'AGENTS.md'"
-    ], expect.any(Object));
+    expect(processRunner.run).toHaveBeenNthCalledWith(
+      2,
+      "/usr/bin/docker",
+      [
+        "exec",
+        "-w",
+        "/workspace/demo/repo",
+        "agent-1",
+        "sh",
+        "-lc",
+        "test -s 'knowledge/WORKFLOW_PROMPTS.md' || test -s 'WORKFLOW_PROMPTS.md'"
+      ],
+      expect.any(Object)
+    );
     expect(processRunner.run).toHaveBeenNthCalledWith(3, "/usr/bin/docker", [
       "exec",
       "-w",
@@ -148,17 +143,7 @@ describe("CodexRunner", () => {
       "-m",
       "gpt-5.4-medium",
       "-c",
-      "model_provider=\"rightcode\"",
-      "-c",
       "model_reasoning_effort=\"medium\"",
-      "-c",
-      "model_providers.rightcode.name=\"rightcode\"",
-      "-c",
-      "model_providers.rightcode.base_url=\"https://right.codes/codex/v1\"",
-      "-c",
-      "model_providers.rightcode.wire_api=\"responses\"",
-      "-c",
-      "model_providers.rightcode.requires_openai_auth=true",
       [
         "使用 `brainstorm` 技能，根据以下需求生成需求澄清文档：",
         "Implement the feature",
@@ -182,17 +167,7 @@ describe("CodexRunner", () => {
       "-m",
       "gpt-5.4-medium",
       "-c",
-      "model_provider=\"rightcode\"",
-      "-c",
       "model_reasoning_effort=\"medium\"",
-      "-c",
-      "model_providers.rightcode.name=\"rightcode\"",
-      "-c",
-      "model_providers.rightcode.base_url=\"https://right.codes/codex/v1\"",
-      "-c",
-      "model_providers.rightcode.wire_api=\"responses\"",
-      "-c",
-      "model_providers.rightcode.requires_openai_auth=true",
       [
         "使用 `mrd` 技能，优先基于 `docs/feature/demo/brainstorm.md`，并结合以下需求生成 MRD：",
         "Implement the feature",
@@ -253,7 +228,41 @@ describe("CodexRunner", () => {
     });
   });
 
-  it("re-runs the execution tail until taskResult and OpenSpec tasks are complete", async () => {
+  it("injects custom provider config when explicitly configured", async () => {
+    const processRunner = {
+      run: jest
+        .fn()
+        .mockResolvedValueOnce({ stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ stdout: "brainstormed", stderr: "" })
+        .mockResolvedValueOnce({ stdout: "mrd written", stderr: "" })
+    };
+    const runner = new CodexRunner(
+      createConfigService({
+        CODEX_CLI_BIN: "codex-dev",
+        CODEX_MODEL: "gpt-5.4-medium",
+        CODEX_MODEL_REASONING_EFFORT: "medium",
+        CODEX_MODEL_PROVIDER: "rightcode",
+        CODEX_MODEL_BASE_URL: "https://right.codes/codex/v1",
+        CODEX_MODEL_WIRE_API: "responses",
+        CODEX_MODEL_REQUIRES_OPENAI_AUTH: "true"
+      }) as never,
+      processRunner
+    );
+
+    await runner.run(createTask(), createAgent());
+
+    const brainstormArgs = processRunner.run.mock.calls[2][1] as string[];
+    expect(brainstormArgs).toContain("model_provider=\"rightcode\"");
+    expect(brainstormArgs).toContain("model_providers.rightcode.name=\"rightcode\"");
+    expect(brainstormArgs).toContain("model_providers.rightcode.base_url=\"https://right.codes/codex/v1\"");
+    expect(brainstormArgs).toContain("model_providers.rightcode.wire_api=\"responses\"");
+    expect(brainstormArgs).toContain("model_providers.rightcode.requires_openai_auth=true");
+    expect(brainstormArgs).toContain("gpt-5.4-medium");
+    expect(brainstormArgs).toContain("model_reasoning_effort=\"medium\"");
+  });
+
+  it("re-runs loop-enabled nodes in place before continuing to the next node", async () => {
     const loopWorkflowPromptsContent = [
       "# Workflow",
       "",
@@ -315,9 +324,6 @@ describe("CodexRunner", () => {
     });
     jest.spyOn(fs, "readFileSync").mockImplementation((filePath: fs.PathOrFileDescriptor) => {
       const pathValue = String(filePath);
-      if (pathValue.endsWith("/AGENTS.md")) {
-        return agentsContent;
-      }
       if (pathValue.endsWith("/knowledge/WORKFLOW_PROMPTS.md")) {
         return loopWorkflowPromptsContent;
       }
@@ -336,7 +342,7 @@ describe("CodexRunner", () => {
         if (args[0] === "exec" && args[4] === "codex") {
           codexExecCount += 1;
           const prompt = args[args.length - 1];
-          if (codexExecCount === 4 && prompt === "IMPROVE_CODE_PROMPT") {
+          if (codexExecCount === 5 && prompt === "IMPROVE_CODE_PROMPT") {
             taskResultContent = "已完成\n所有任务已完成";
             openSpecTasksContent = "- [x] 1.1 done";
           }
@@ -359,15 +365,14 @@ describe("CodexRunner", () => {
 
     const result = await runner.run(createTask(), createAgent());
 
-    expect(codexExecCount).toBe(4);
+    expect(codexExecCount).toBe(5);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("WriteCode stdout:\nwrite pass 1");
-    expect(result.stdout).toContain("Pass 2 WriteCode stdout:\nwrite pass 3");
-    expect(result.stdout).toContain("Pass 2 ImproveCode stdout:\nimprove pass 4");
-    expect(result.stderr).toContain('Pass 1 completion check:\ndocs/feature/demo/taskResult.md first line is "未完成"');
+    expect(result.stdout).toContain("WriteCode iteration 1/3 stdout:\nwrite pass 1");
+    expect(result.stdout).toContain("WriteCode iteration 3/3 stdout:\nwrite pass 3");
+    expect(result.stdout).toContain("ImproveCode iteration 2/2 stdout:\nimprove pass 5");
   });
 
-  it("fails when tasks remain incomplete after the configured workflow pass limit", async () => {
+  it("fails when tasks remain incomplete after node-local loops are exhausted", async () => {
     const loopWorkflowPromptsContent = [
       "# Workflow",
       "",
@@ -410,9 +415,6 @@ describe("CodexRunner", () => {
     jest.spyOn(fs, "statSync").mockImplementation(() => ({ mtimeMs: 100 } as never));
     jest.spyOn(fs, "readFileSync").mockImplementation((filePath: fs.PathOrFileDescriptor) => {
       const pathValue = String(filePath);
-      if (pathValue.endsWith("/AGENTS.md")) {
-        return agentsContent;
-      }
       if (pathValue.endsWith("/knowledge/WORKFLOW_PROMPTS.md")) {
         return loopWorkflowPromptsContent;
       }
@@ -444,17 +446,17 @@ describe("CodexRunner", () => {
 
     expect(result.stage).toBe("execute");
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("Pass 1 completion check");
-    expect(result.stderr).toContain("Workflow incomplete after 2 passes");
+    expect(result.stderr).toContain("Workflow completion check");
+    expect(result.stderr).toContain("Workflow incomplete after node-local loops");
   });
 
-  it("fails when AGENTS.md is missing or empty", async () => {
+  it("fails when WORKFLOW_PROMPTS.md is missing or empty", async () => {
     const processRunner = {
       run: jest
         .fn()
         .mockResolvedValueOnce({ stdout: "", stderr: "" })
         .mockImplementationOnce(async () => {
-          throw Object.assign(new Error("missing AGENTS.md"), {
+          throw Object.assign(new Error("missing WORKFLOW_PROMPTS.md"), {
             code: 1,
             stderr: ""
           });
@@ -465,10 +467,10 @@ describe("CodexRunner", () => {
     const result = await runner.run(createTask(), createAgent());
 
     expect(result).toEqual({
-      stage: "agents-md",
+      stage: "workflow-prompts",
       exitCode: 1,
       stdout: "",
-      stderr: "agents-md stderr:\nmissing AGENTS.md",
+      stderr: "workflow-prompts stderr:\nmissing WORKFLOW_PROMPTS.md",
       timedOut: false,
       branchCheckedOut: true,
       codexStarted: false,
@@ -481,14 +483,11 @@ describe("CodexRunner", () => {
     });
   });
 
-  it("fails when AGENTS.md does not contain the default workflow section", async () => {
+  it("fails when WORKFLOW_PROMPTS.md does not contain the default workflow section", async () => {
     jest.spyOn(fs, "readFileSync").mockImplementation((filePath: fs.PathOrFileDescriptor) => {
       const pathValue = String(filePath);
-      if (pathValue.endsWith("/AGENTS.md")) {
-        return "# AGENTS\n\nNo default workflow here.";
-      }
       if (pathValue.endsWith("/knowledge/WORKFLOW_PROMPTS.md") || pathValue.endsWith("/WORKFLOW_PROMPTS.md")) {
-        return workflowPromptsContent;
+        return "# Workflow\n\nNo default workflow here.";
       }
       throw new Error(`Unexpected file read: ${pathValue}`);
     });
@@ -503,10 +502,10 @@ describe("CodexRunner", () => {
     const result = await runner.run(createTask(), createAgent());
 
     expect(result).toEqual({
-      stage: "agents-md",
+      stage: "workflow-prompts",
       exitCode: 1,
       stdout: "",
-      stderr: "agents-md stderr:\nMissing ## Agents 默认执行流程 section in AGENTS.md",
+      stderr: "workflow-prompts stderr:\nNo workflow nodes found in WORKFLOW_PROMPTS.md default workflow section",
       timedOut: false,
       branchCheckedOut: true,
       codexStarted: false,
@@ -522,9 +521,6 @@ describe("CodexRunner", () => {
   it("fails when workflow prompts are missing for a node", async () => {
     jest.spyOn(fs, "readFileSync").mockImplementation((filePath: fs.PathOrFileDescriptor) => {
       const pathValue = String(filePath);
-      if (pathValue.endsWith("/AGENTS.md")) {
-        return agentsContent;
-      }
       if (pathValue.endsWith("/knowledge/WORKFLOW_PROMPTS.md") || pathValue.endsWith("/WORKFLOW_PROMPTS.md")) {
         return [
           "# Workflow",
@@ -561,10 +557,10 @@ describe("CodexRunner", () => {
     const result = await runner.run(createTask(), createAgent());
 
     expect(result).toEqual({
-      stage: "agents-md",
+      stage: "workflow-prompts",
       exitCode: 1,
       stdout: "",
-      stderr: "agents-md stderr:\nMissing ### WriteMRD section in WORKFLOW_PROMPTS.md",
+      stderr: "workflow-prompts stderr:\nMissing ### WriteMRD section in WORKFLOW_PROMPTS.md",
       timedOut: false,
       branchCheckedOut: true,
       codexStarted: false,
@@ -606,15 +602,20 @@ describe("CodexRunner", () => {
       "checkout",
       "main"
     ], expect.any(Object));
-    expect(processRunner.run).toHaveBeenNthCalledWith(2, "/usr/bin/docker", [
-      "exec",
-      "-w",
-      "/Users/l/Documents/work/code/demo/AutoFlow/project-a",
-      "agent-1",
-      "sh",
-      "-lc",
-      "test -s 'AGENTS.md'"
-    ], expect.any(Object));
+    expect(processRunner.run).toHaveBeenNthCalledWith(
+      2,
+      "/usr/bin/docker",
+      [
+        "exec",
+        "-w",
+        "/Users/l/Documents/work/code/demo/AutoFlow/project-a",
+        "agent-1",
+        "sh",
+        "-lc",
+        "test -s 'knowledge/WORKFLOW_PROMPTS.md' || test -s 'WORKFLOW_PROMPTS.md'"
+      ],
+      expect.any(Object)
+    );
     expect(processRunner.run).toHaveBeenCalledTimes(4);
   });
 
