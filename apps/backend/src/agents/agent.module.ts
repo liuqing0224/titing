@@ -10,6 +10,6 @@ import { DockerAgentService } from "./docker-agent.service";
   imports: [TypeOrmModule.forFeature([Agent]), EventsModule],
   controllers: [AgentController],
   providers: [AgentService, DockerAgentService],
-  exports: [AgentService]
+  exports: [AgentService, DockerAgentService]
 })
 export class AgentModule {}

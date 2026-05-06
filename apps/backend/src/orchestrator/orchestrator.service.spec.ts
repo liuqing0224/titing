@@ -119,12 +119,14 @@ describe("OrchestratorService", () => {
         taskId: "auto-1",
         agentId: "agent-1",
         status: "running",
-        message: "Preparing project workspace for branch checkout and Codex execution",
+        message: "Preparing project workspace, validating AGENTS.md, and executing Codex",
         metadata: expect.objectContaining({
           repo: "demo/repo",
           branch: "main",
           hostCwd: expect.stringContaining("/demo/repo"),
-          containerCwd: "/workspace/demo/repo"
+          containerCwd: "/workspace/demo/repo",
+          agentsMdPath: "/workspace/demo/repo/AGENTS.md",
+          workflowPromptsPath: "/workspace/demo/repo/knowledge/WORKFLOW_PROMPTS.md"
         })
       })
     );
@@ -134,13 +136,15 @@ describe("OrchestratorService", () => {
         taskId: "auto-1",
         agentId: "agent-1",
         status: "running",
-        message: "Codex exited normally",
+        message: "AGENTS.md workflow executed and Codex exited normally",
         metadata: expect.objectContaining({
-          stage: "codex",
+          stage: "execute",
           exitCode: 0,
           normalExit: true,
           branchCheckedOut: true,
-          codexStarted: true
+          codexStarted: true,
+          agentsMdPath: "/workspace/demo/repo/AGENTS.md",
+          workflowPromptsPath: "/workspace/demo/repo/knowledge/WORKFLOW_PROMPTS.md"
         })
       })
     );
@@ -149,13 +153,15 @@ describe("OrchestratorService", () => {
       branch: "main",
       hostCwd: expect.stringContaining("/demo/repo"),
       containerCwd: "/workspace/demo/repo",
-      stage: "codex",
+      stage: "execute",
       stdout: "ok",
       stderr: "",
       exitCode: 0,
       timedOut: false,
       branchCheckedOut: true,
       codexStarted: true,
+      agentsMdPath: "/workspace/demo/repo/AGENTS.md",
+      workflowPromptsPath: "/workspace/demo/repo/knowledge/WORKFLOW_PROMPTS.md",
       normalExit: true
     });
     expect(reporter.reportSuccess).toHaveBeenCalledWith(
@@ -183,20 +189,26 @@ describe("OrchestratorService", () => {
 
     await service.poll();
 
-    expect(taskService.markFailedInternal).toHaveBeenCalledWith("auto-1", "Codex exited abnormally", {
-      repo: "demo/repo",
-      branch: "main",
-      hostCwd: expect.stringContaining("/demo/repo"),
-      containerCwd: "/workspace/demo/repo",
-      stage: "codex",
-      stdout: "out",
-      stderr: "boom",
-      exitCode: 1,
-      timedOut: false,
-      branchCheckedOut: true,
-      codexStarted: true,
-      normalExit: false
-    });
+    expect(taskService.markFailedInternal).toHaveBeenCalledWith(
+      "auto-1",
+      "Codex exited abnormally while following AGENTS.md workflow",
+      {
+        repo: "demo/repo",
+        branch: "main",
+        hostCwd: expect.stringContaining("/demo/repo"),
+        containerCwd: "/workspace/demo/repo",
+        stage: "execute",
+        stdout: "out",
+        stderr: "boom",
+        exitCode: 1,
+        timedOut: false,
+        branchCheckedOut: true,
+        codexStarted: true,
+        agentsMdPath: "/workspace/demo/repo/AGENTS.md",
+        workflowPromptsPath: "/workspace/demo/repo/knowledge/WORKFLOW_PROMPTS.md",
+        normalExit: false
+      }
+    );
     expect(reporter.reportFailure).toHaveBeenCalledWith(
       expect.objectContaining({ id: "auto-1" }),
       expect.objectContaining({ stdout: "out", stderr: "boom", exitCode: 1 })
@@ -238,6 +250,45 @@ describe("OrchestratorService", () => {
         branchCheckedOut: false,
         codexStarted: false,
         containerCwd: "/workspace/demo/repo"
+      })
+    );
+  });
+
+  it("marks task failed when AGENTS.md is missing", async () => {
+    const task = createTask({ id: "auto-1", status: "queued" });
+    const agent = createAgent({ id: "agent-1" });
+    const taskService = createTaskService([task]);
+    const agentService = createAgentService([agent]);
+    const runner = createRunner({
+      stage: "agents-md",
+      exitCode: 1,
+      stdout: "",
+      stderr: "agents-md stderr:\nmissing AGENTS.md",
+      timedOut: false,
+      branchCheckedOut: true,
+      codexStarted: false
+    });
+    const executionLogService = createExecutionLogService();
+    const service = new OrchestratorService(
+      taskService as never,
+      agentService as never,
+      executionLogService as never,
+      runner as never,
+      createResultReporter() as never
+    );
+
+    await service.poll();
+
+    expect(taskService.markFailedInternal).toHaveBeenCalledWith(
+      "auto-1",
+      "Project root AGENTS.md is missing or empty",
+      expect.objectContaining({
+        stage: "agents-md",
+        exitCode: 1,
+        branchCheckedOut: true,
+        codexStarted: false,
+        agentsMdPath: "/workspace/demo/repo/AGENTS.md",
+        workflowPromptsPath: "/workspace/demo/repo/knowledge/WORKFLOW_PROMPTS.md"
       })
     );
   });
@@ -290,6 +341,69 @@ describe("OrchestratorService", () => {
     expect(agentService.refreshHeartbeat).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps refreshing heartbeat while Codex execution is still running", async () => {
+    jest.useFakeTimers();
+
+    let resolveRun: (value: CodexRunResult) => void = () => undefined;
+    const task = createTask({ id: "auto-1", status: "queued" });
+    const agent = createAgent({ id: "agent-1" });
+    const taskService = createTaskService([task]);
+    const agentService = createAgentService([agent]);
+    const runner = {
+      getExecutionContext: jest.fn(
+        (runnerTask: Task): CodexExecutionContext => ({
+          repo: runnerTask.repo,
+          branch: runnerTask.branch,
+          hostCwd: `${process.cwd()}/${runnerTask.repo}`,
+          containerCwd: `/workspace/${runnerTask.repo}`,
+          cloneUrl: null,
+          isAbsolutePath: false,
+          agentsMdPath: `/workspace/${runnerTask.repo}/AGENTS.md`,
+          workflowPromptsPath: `/workspace/${runnerTask.repo}/knowledge/WORKFLOW_PROMPTS.md`
+        })
+      ),
+      run: jest.fn(
+        () =>
+          new Promise<CodexRunResult>((resolve) => {
+            resolveRun = resolve;
+          })
+      )
+    };
+    process.env.AGENT_HEARTBEAT_REFRESH_INTERVAL_MS = "1000";
+    const service = new OrchestratorService(
+      taskService as never,
+      agentService as never,
+      createExecutionLogService() as never,
+      runner as never,
+      createResultReporter() as never
+    );
+
+    const pollPromise = service.poll();
+    await jest.advanceTimersByTimeAsync(3000);
+
+    expect(agentService.refreshHeartbeat.mock.calls.length).toBeGreaterThanOrEqual(4);
+
+    resolveRun({
+      stage: "execute",
+      exitCode: 0,
+      stdout: "ok",
+      stderr: "",
+      timedOut: false,
+      branchCheckedOut: true,
+      codexStarted: true,
+      repo: task.repo,
+      branch: task.branch,
+      hostCwd: `${process.cwd()}/${task.repo}`,
+      containerCwd: `/workspace/${task.repo}`,
+      agentsMdPath: `/workspace/${task.repo}/AGENTS.md`,
+      workflowPromptsPath: `/workspace/${task.repo}/knowledge/WORKFLOW_PROMPTS.md`
+    });
+    await pollPromise;
+
+    delete process.env.AGENT_HEARTBEAT_REFRESH_INTERVAL_MS;
+    jest.useRealTimers();
+  });
+
   it("skips overlapping poll while a previous poll is still running", async () => {
     let resolveRun: (value: CodexRunResult) => void = () => undefined;
     let markRunStarted: () => void = () => undefined;
@@ -302,25 +416,23 @@ describe("OrchestratorService", () => {
     const agentService = createAgentService([agent]);
     const runner = {
       getExecutionContext: jest.fn(
-        (task: Task): CodexExecutionContext => ({
-          repo: task.repo,
-          branch: task.branch,
-          hostCwd: `${process.cwd()}/${task.repo}`,
-          containerCwd: `/workspace/${task.repo}`,
+        (runnerTask: Task): CodexExecutionContext => ({
+          repo: runnerTask.repo,
+          branch: runnerTask.branch,
+          hostCwd: `${process.cwd()}/${runnerTask.repo}`,
+          containerCwd: `/workspace/${runnerTask.repo}`,
           cloneUrl: null,
-          isAbsolutePath: false
+          isAbsolutePath: false,
+          agentsMdPath: `/workspace/${runnerTask.repo}/AGENTS.md`,
+          workflowPromptsPath: `/workspace/${runnerTask.repo}/knowledge/WORKFLOW_PROMPTS.md`
         })
       ),
-      run: jest.fn(
-        () => {
-          markRunStarted();
-          return (
-          new Promise<CodexRunResult>((resolve) => {
-            resolveRun = resolve;
-          })
-          );
-        }
-      )
+      run: jest.fn(() => {
+        markRunStarted();
+        return new Promise<CodexRunResult>((resolve) => {
+          resolveRun = resolve;
+        });
+      })
     };
     const service = new OrchestratorService(
       taskService as never,
@@ -334,7 +446,7 @@ describe("OrchestratorService", () => {
     await runStarted;
     await service.poll();
     resolveRun({
-      stage: "codex",
+      stage: "execute",
       exitCode: 0,
       stdout: "ok",
       stderr: "",
@@ -344,7 +456,9 @@ describe("OrchestratorService", () => {
       repo: task.repo,
       branch: task.branch,
       hostCwd: `${process.cwd()}/${task.repo}`,
-      containerCwd: `/workspace/${task.repo}`
+      containerCwd: `/workspace/${task.repo}`,
+      agentsMdPath: `/workspace/${task.repo}/AGENTS.md`,
+      workflowPromptsPath: `/workspace/${task.repo}/knowledge/WORKFLOW_PROMPTS.md`
     });
     await firstPoll;
 
@@ -445,11 +559,13 @@ function createRunner(
         hostCwd: `${process.cwd()}/${task.repo}`,
         containerCwd: `/workspace/${task.repo}`,
         cloneUrl: null,
-        isAbsolutePath: false
+        isAbsolutePath: false,
+        agentsMdPath: `/workspace/${task.repo}/AGENTS.md`,
+        workflowPromptsPath: `/workspace/${task.repo}/knowledge/WORKFLOW_PROMPTS.md`
       })
     ),
     run: jest.fn(async (task: Task) => ({
-      stage: "codex",
+      stage: "execute",
       timedOut: false,
       branchCheckedOut: true,
       codexStarted: true,
@@ -457,6 +573,8 @@ function createRunner(
       branch: task.branch,
       hostCwd: `${process.cwd()}/${task.repo}`,
       containerCwd: `/workspace/${task.repo}`,
+      agentsMdPath: `/workspace/${task.repo}/AGENTS.md`,
+      workflowPromptsPath: `/workspace/${task.repo}/knowledge/WORKFLOW_PROMPTS.md`,
       ...result
     }))
   };

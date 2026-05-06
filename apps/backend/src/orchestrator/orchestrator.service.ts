@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { AgentService } from "../agents/agent.service";
 import { ExecutionLogService } from "../execution-logs/execution-log.service";
@@ -17,6 +17,7 @@ const PRIORITY_RANK: Record<string, number> = {
 @Injectable()
 export class OrchestratorService {
   private polling = false;
+  private readonly logger = new Logger(OrchestratorService.name);
 
   constructor(
     private readonly taskService: TaskService,
@@ -96,37 +97,70 @@ export class OrchestratorService {
     task: Task,
     agent: NonNullable<Awaited<ReturnType<AgentService["findIdleAgent"]>>>
   ): Promise<void> {
+    this.logger.log(`Task ${task.id} claimed by ${agent.id}, starting orchestration`);
     const executionContext = this.codexRunner.getExecutionContext(task);
     await this.executionLogService.append({
       taskId: task.id,
       agentId: agent.id,
       status: "running",
-      message: "Preparing project workspace for branch checkout and Codex execution",
+      message: "Preparing project workspace, validating AGENTS.md, and executing Codex",
       metadata: this.buildExecutionMetadata(executionContext)
     });
     await this.agentService.refreshHeartbeat(agent.id);
-    const result = await this.codexRunner.run(task, agent);
+    const stopHeartbeatLoop = this.startHeartbeatLoop(agent.id);
+
+    let result: Awaited<ReturnType<CodexRunner["run"]>>;
+    try {
+      result = await this.codexRunner.run(task, agent);
+    } finally {
+      stopHeartbeatLoop();
+    }
+
     await this.agentService.refreshHeartbeat(agent.id);
     const metadata = this.buildExecutionMetadata(result);
+    this.logger.log(
+      `Task ${task.id} runner returned exitCode=${result.exitCode}, stage=${result.stage}, timedOut=${result.timedOut}`
+    );
 
     try {
       if (result.exitCode === 0) {
+        this.logger.log(`Task ${task.id} marking done`);
         await this.executionLogService.append({
           taskId: task.id,
           agentId: agent.id,
           status: "running",
-          message: "Codex exited normally",
+          message: "AGENTS.md workflow executed and Codex exited normally",
           metadata
         });
         await this.taskService.markDoneInternal(task.id, metadata);
         await this.ignoreReporterFailure(this.resultReporter.reportSuccess(task, result));
       } else {
+        this.logger.warn(`Task ${task.id} marking failed: ${this.getFailureMessage(result)}`);
         await this.taskService.markFailedInternal(task.id, this.getFailureMessage(result), metadata);
         await this.ignoreReporterFailure(this.resultReporter.reportFailure(task, result));
       }
     } finally {
+      this.logger.log(`Task ${task.id} releasing agent ${agent.id}`);
       await this.agentService.markIdle(agent.id);
     }
+  }
+
+  private startHeartbeatLoop(agentId: string): () => void {
+    const intervalMs = Number(process.env.AGENT_HEARTBEAT_REFRESH_INTERVAL_MS ?? 15000);
+    if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+      return () => undefined;
+    }
+
+    const timer = setInterval(() => {
+      void this.agentService.refreshHeartbeat(agentId).catch((error: unknown) => {
+        this.logger.warn(
+          `Failed to refresh heartbeat for ${agentId}: ${error instanceof Error ? error.message : String(error)}`
+        );
+      });
+    }, intervalMs);
+    timer.unref?.();
+
+    return () => clearInterval(timer);
   }
 
   private async ignoreReporterFailure(operation: Promise<void>): Promise<void> {
@@ -160,6 +194,8 @@ export class OrchestratorService {
       branch: execution.branch,
       hostCwd: execution.hostCwd,
       containerCwd: execution.containerCwd,
+      agentsMdPath: execution.agentsMdPath,
+      workflowPromptsPath: execution.workflowPromptsPath,
       ...("cloneUrl" in execution ? { cloneUrl: execution.cloneUrl } : {}),
       ...("stage" in execution
         ? {
@@ -170,7 +206,9 @@ export class OrchestratorService {
             timedOut: execution.timedOut,
             branchCheckedOut: execution.branchCheckedOut,
             codexStarted: execution.codexStarted,
-            normalExit: execution.exitCode === 0 && execution.stage === "codex"
+            agentsMdPath: execution.agentsMdPath,
+            workflowPromptsPath: execution.workflowPromptsPath,
+            normalExit: execution.exitCode === 0 && execution.stage === "execute"
           }
         : {})
     };
@@ -183,9 +221,12 @@ export class OrchestratorService {
     if (result.stage === "checkout") {
       return "Branch checkout failed in project directory";
     }
+    if (result.stage === "agents-md") {
+      return "Project root AGENTS.md is missing or empty";
+    }
     if (result.timedOut) {
       return "Codex timed out";
     }
-    return "Codex exited abnormally";
+    return "Codex exited abnormally while following AGENTS.md workflow";
   }
 }

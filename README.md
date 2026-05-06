@@ -53,7 +53,7 @@ docker compose up --build
 - Agent 可调用 `POST /api/agents/:id/heartbeat` 刷新心跳；空闲 Agent 会在调度轮询时恢复心跳，避免池长期耗尽。
 - Docker Agent 池通过 `DOCKER_BIN` 调用 Docker CLI，按 `AGENT_IMAGE` 创建/启动 `agent-1`、`agent-2` 等容器，并将 `CODEX_WORKDIR` 挂载到容器内 `/workspace`。
 - Codex 执行命令由 `CODEX_CLI_BIN` 配置，默认 `codex`。
-- CodexRunner 执行参数为 `codex exec --cwd <CODEX_WORKDIR>/<repo> --branch <branch> <instruction>`，默认超时由 `CODEX_TIMEOUT_MS` 控制。
+- CodexRunner 会先在目标仓库根目录校验 `AGENTS.md` 是否存在且非空，再执行单次 `codex exec`；`AGENTS.md` 负责定义任务执行流程，默认超时由 `CODEX_TIMEOUT_MS` 控制。
 - 数据库迁移随后端启动自动运行，也可通过 `npm run migration:run -w apps/backend` 手动执行。
 - Meegle sync 会先执行 `meegle task list --status open` 获取 open 任务，再逐个执行 `meegle task get <id>` 拉取详情；支持数组、`tasks`、`items`、`data` 等 JSON 输出结构。
 - Codex 执行完成后，系统会通过 `meegle comment add <externalId> <summary>` 回写成功或失败摘要；本阶段不自动创建 PR。

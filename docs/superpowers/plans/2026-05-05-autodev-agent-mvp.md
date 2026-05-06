@@ -1,6 +1,6 @@
 # AutoDev Agent MVP Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Note:** This plan file is kept as historical implementation context. Runtime task execution should follow the target repository root `agent.md` workflow instead of any superpowers-based process.
 
 **Goal:** 从 `pm/prd.md` 落地 AutoDev Agent MVP：Meegle 同步、任务生命周期、预创建 Agent 池、Orchestrator 调度、SSE 实时推送、ExecutionLog 查看和轻量 Dashboard。
 
