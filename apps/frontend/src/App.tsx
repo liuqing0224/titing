@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { listAgents } from "./api/agents";
 import { getDashboardStats } from "./api/dashboard";
 import { connectEvents } from "./api/events";
+import { getMeegleSyncSettings, updateMeegleSyncSettings } from "./api/settings";
 import { getTask, listTasks } from "./api/tasks";
-import { Agent, DashboardStats, Task } from "./api/types";
+import { Agent, DashboardStats, MeegleSyncSettings, Task } from "./api/types";
 import { AgentsPage } from "./pages/AgentsPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { TaskDetailPage } from "./pages/TaskDetailPage";
@@ -23,6 +24,7 @@ export default function App() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [meegleSyncSettings, setMeegleSyncSettings] = useState<MeegleSyncSettings | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(true);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isTaskLoading, setIsTaskLoading] = useState(false);
@@ -35,9 +37,11 @@ export default function App() {
         listTasks(),
         listAgents()
       ]);
+      const nextMeegleSyncSettings = await getMeegleSyncSettings();
       setStats(nextStats);
       setTasks(nextTasks);
       setAgents(nextAgents);
+      setMeegleSyncSettings(nextMeegleSyncSettings);
       if (route.taskId) {
         const nextSelectedTask = nextTasks.find((task) => task.id === route.taskId) ?? null;
         setSelectedTask(nextSelectedTask);
@@ -49,8 +53,14 @@ export default function App() {
 
   useEffect(() => {
     void refreshAll();
-    return connectEvents(() => {
-      void refreshAll();
+    return connectEvents({
+      refreshAll: () => {
+        void refreshAll();
+      },
+      onMeegleLoginRequired: (event) => {
+        window.open(event.verificationUri, "_blank", "noopener,noreferrer");
+        window.alert(`已在宿主机浏览器打开 Meegle 登录页面。验证码：${event.userCode}`);
+      }
     });
   }, []);
 
@@ -112,6 +122,11 @@ export default function App() {
 
   const openTaskDetail = (taskId: string) => {
     navigateTo(`/tasks/${taskId}`);
+  };
+
+  const saveMeegleSyncSettings = async (input: MeegleSyncSettings) => {
+    const saved = await updateMeegleSyncSettings(input);
+    setMeegleSyncSettings(saved);
   };
 
   return (
@@ -191,7 +206,9 @@ export default function App() {
               stats={stats}
               tasks={tasks}
               agents={agents}
+              meegleSyncSettings={meegleSyncSettings}
               refreshAll={refreshAll}
+              onSaveMeegleSyncSettings={saveMeegleSyncSettings}
               onOpenTask={openTaskDetail}
             />
           ) : null}

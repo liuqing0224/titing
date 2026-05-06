@@ -56,5 +56,14 @@ docker compose up --build
 - CodexRunner 会先在目标仓库根目录校验 `AGENTS.md` 是否存在且非空，再执行单次 `codex exec`；`AGENTS.md` 负责定义任务执行流程，默认超时由 `CODEX_TIMEOUT_MS` 控制。
 - 数据库迁移随后端启动自动运行，也可通过 `npm run migration:run -w apps/backend` 手动执行。
 - Meegle sync 会先执行 `meegle task list --status open` 获取 open 任务，再逐个执行 `meegle task get <id>` 拉取详情；支持数组、`tasks`、`items`、`data` 等 JSON 输出结构。
+- Meegle 自动同步默认开启，每 `MEEGLE_SYNC_INTERVAL_MINUTES` 分钟执行一次；Dashboard 可在线调整并持久化该间隔。
+- 如果同步时发现 Meegle 未登录，后端会在其宿主机环境直接打开默认浏览器完成授权，然后继续同步。
 - Codex 执行完成后，系统会通过 `meegle comment add <externalId> <summary>` 回写成功或失败摘要；本阶段不自动创建 PR。
 - 前端收到 SSE 事件后重新拉取任务、Agent 和 Dashboard 快照。
+
+## Meegle 自动同步配置
+
+- `MEEGLE_SYNC_ENABLED=true|false`：控制默认是否启用自动同步。
+- `MEEGLE_SYNC_INTERVAL_MINUTES=5`：默认自动同步间隔（分钟），首次启动时作为持久化配置的初始值。
+- Dashboard 中保存的新配置会立即生效，并覆盖后续进程重启前后的运行配置。
+- “打开浏览器登录”发生在后端运行所在的宿主环境；如果后端跑在容器或远端机器，浏览器会出现在那个环境，而不是当前前端浏览器标签页。

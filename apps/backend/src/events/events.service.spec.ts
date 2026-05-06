@@ -36,4 +36,21 @@ describe("EventsService", () => {
     });
     subscription.unsubscribe();
   });
+
+  it("streams meegle login-required events in SSE message format", () => {
+    const service = new EventsService();
+    const messages: MessageEvent[] = [];
+    const subscription = service.stream().subscribe((message: MessageEvent) => messages.push(message));
+
+    service.publishMeegleLoginRequired("https://project.feishu.cn/b/auth/mcp?usercode=ABC-123", "ABC-123");
+
+    expect(messages[0]).toEqual({
+      type: "meegle.login_required",
+      data: expect.objectContaining({
+        verificationUri: "https://project.feishu.cn/b/auth/mcp?usercode=ABC-123",
+        userCode: "ABC-123"
+      })
+    });
+    subscription.unsubscribe();
+  });
 });

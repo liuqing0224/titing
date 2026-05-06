@@ -26,6 +26,14 @@ vi.mock("./api/dashboard", () => ({
   }))
 }));
 
+vi.mock("./api/settings", () => ({
+  getMeegleSyncSettings: vi.fn(async () => ({
+    enabled: true,
+    intervalMinutes: 5
+  })),
+  updateMeegleSyncSettings: vi.fn(async (input: { enabled: boolean; intervalMinutes: number }) => input)
+}));
+
 vi.mock("./api/events", () => ({
   connectEvents: vi.fn(() => vi.fn())
 }));

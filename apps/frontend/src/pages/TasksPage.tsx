@@ -38,29 +38,32 @@ export function TasksPage({ tasks, refreshAll, onOpenTask }: TasksPageProps) {
       </section>
 
       <section className="panel">
-        <div className="filters">
+        <div className="filters filter-bar">
           <label className="field">
             <span>status</span>
-          <select value={status} onChange={(event) => setStatus(event.target.value as "" | TaskStatus)}>
-            {STATUSES.map((value) => (
-              <option key={value || "all"} value={value}>
-                {value || "all"}
-              </option>
-            ))}
-          </select>
+            <select value={status} onChange={(event) => setStatus(event.target.value as "" | TaskStatus)}>
+              {STATUSES.map((value) => (
+                <option key={value || "all"} value={value}>
+                  {value || "all"}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="field">
             <span>priority</span>
-          <select value={priority} onChange={(event) => setPriority(event.target.value as "" | TaskPriority)}>
-            {PRIORITIES.map((value) => (
-              <option key={value || "all"} value={value}>
-                {value || "all"}
-              </option>
-            ))}
-          </select>
+            <select value={priority} onChange={(event) => setPriority(event.target.value as "" | TaskPriority)}>
+              {PRIORITIES.map((value) => (
+                <option key={value || "all"} value={value}>
+                  {value || "all"}
+                </option>
+              ))}
+            </select>
           </label>
-          <div className="filter-summary">
-            <span className="terminal-chip">{filteredTasks.length} visible</span>
+          <div className="filter-summary-block">
+            <div className="filter-summary">
+              <span className="terminal-chip">{filteredTasks.length} visible</span>
+            </div>
+            <p className="muted-copy">先筛出任务集合，再进入单条详情做日志、编辑和重试。</p>
           </div>
         </div>
       </section>

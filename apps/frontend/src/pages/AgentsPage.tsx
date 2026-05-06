@@ -45,10 +45,10 @@ export function AgentsPage({ agents, tasks }: AgentsPageProps) {
           </div>
           <span className="terminal-chip">{tasks.filter((task) => task.agentId).length} task bindings</span>
         </div>
-        <section className="grid">
-        {agents.map((agent) => (
-          <AgentCard agent={agent} key={agent.id} />
-        ))}
+        <section className="grid agent-grid">
+          {agents.map((agent) => (
+            <AgentCard agent={agent} key={agent.id} />
+          ))}
         </section>
       </section>
     </div>

@@ -56,6 +56,20 @@ const createLogService = () => ({
   append: jest.fn(async () => undefined)
 });
 
+const createBrowserLauncher = () => ({
+  open: jest.fn(async () => undefined)
+});
+
+const createSettingsService = () => ({
+  setMeegleLoginState: jest.fn(async () => ({ browserPending: false }))
+});
+
+const createEventsService = () => ({
+  hasSubscribers: jest.fn(() => true),
+  publishTaskLifecycle: jest.fn(),
+  publishMeegleLoginRequired: jest.fn()
+});
+
 const createMeegleAdapter = (tasks: RawMeegleTask[], authenticated = true) => ({
   listOpenTasks: jest.fn(async () => tasks),
   getAuthStatus: jest.fn(async () => ({ authenticated, host: "project.feishu.cn" })),
@@ -67,25 +81,29 @@ const createMeegleAdapter = (tasks: RawMeegleTask[], authenticated = true) => ({
     userCode: "ABC-123",
     verificationUri: "https://project.feishu.cn/b/auth/mcp",
     verificationUriComplete: "https://project.feishu.cn/b/auth/mcp?usercode=ABC-123"
-  }))
+  })),
+  pollLogin: jest.fn(async () => ({ authenticated: true, host: "project.feishu.cn" }))
 });
 
 describe("AdapterService", () => {
   it("creates failed task and log when synced task lacks execution fields", async () => {
     const repository = createRepository();
     const logService = createLogService();
+    const meegleAdapter = createMeegleAdapter([
+      {
+        id: "MEEGLE-1",
+        title: "Missing instruction",
+        description: "No instruction",
+        repo: "demo/repo",
+        branch: "main"
+      }
+    ]);
     const service = new AdapterService(
       repository as never,
       logService as never,
-      createMeegleAdapter([
-        {
-          id: "MEEGLE-1",
-          title: "Missing instruction",
-          description: "No instruction",
-          repo: "demo/repo",
-          branch: "main"
-        }
-      ]) as never
+      meegleAdapter as never,
+      createBrowserLauncher() as never,
+      createSettingsService() as never
     );
 
     const result = await service.sync();
@@ -98,6 +116,7 @@ describe("AdapterService", () => {
         message: "Task execution fields are invalid"
       })
     );
+    expect(meegleAdapter.getAuthStatus).toHaveBeenCalled();
   });
 
   it("recovers failed task to pending when sync supplies valid execution fields", async () => {
@@ -124,7 +143,9 @@ describe("AdapterService", () => {
           branch: "main",
           instruction: "Run again"
         }
-      ]) as never
+      ]) as never,
+      createBrowserLauncher() as never,
+      createSettingsService() as never
     );
 
     const result = await service.sync();
@@ -151,7 +172,9 @@ describe("AdapterService", () => {
           branch: "main",
           instruction: "New instruction"
         }
-      ]) as never
+      ]) as never,
+      createBrowserLauncher() as never,
+      createSettingsService() as never
     );
 
     const result = await service.sync();
@@ -161,14 +184,33 @@ describe("AdapterService", () => {
     expect(saved?.status).toBe("pending");
   });
 
-  it("throws unauthorized when Meegle login is required", async () => {
+  it("opens browser and continues sync when Meegle login is required", async () => {
+    const browserLauncher = createBrowserLauncher();
+    const settingsService = createSettingsService();
+    const meegleAdapter = {
+      ...createMeegleAdapter([], false),
+      getAuthStatus: jest
+        .fn()
+        .mockResolvedValueOnce({ authenticated: false, host: "project.feishu.cn" })
+        .mockResolvedValueOnce({ authenticated: true, host: "project.feishu.cn" })
+    };
     const service = new AdapterService(
       createRepository() as never,
       createLogService() as never,
-      createMeegleAdapter([], false) as never
+      meegleAdapter as never,
+      browserLauncher as never,
+      settingsService as never
     );
+    (service as unknown as { sleep: (ms: number) => Promise<void> }).sleep = jest.fn(async () => undefined);
 
-    await expect(service.sync()).rejects.toThrow("Meegle login required");
+    const result = await service.sync();
+
+    expect(browserLauncher.open).toHaveBeenCalledWith("https://project.feishu.cn/b/auth/mcp?usercode=ABC-123");
+    expect(meegleAdapter.beginLogin).toHaveBeenCalled();
+    expect(meegleAdapter.pollLogin).toHaveBeenCalled();
+    expect(result.summary.created).toBe(0);
+    expect(settingsService.setMeegleLoginState).toHaveBeenCalledWith({ browserPending: true });
+    expect(settingsService.setMeegleLoginState).toHaveBeenLastCalledWith({ browserPending: false });
   });
 
   it("generates a feature branch when synced task has no branch", async () => {
@@ -185,12 +227,54 @@ describe("AdapterService", () => {
           branch: "",
           instruction: "Implement it"
         }
-      ]) as never
+      ]) as never,
+      createBrowserLauncher() as never,
+      createSettingsService() as never
     );
 
     await service.sync();
 
     expect(Array.from(repository.store.values())[0]?.branch).toBe("feature/20260506050102");
     jest.useRealTimers();
+  });
+
+  it("opens browser from beginLogin and marks pending state", async () => {
+    const browserLauncher = createBrowserLauncher();
+    const settingsService = createSettingsService();
+    const service = new AdapterService(
+      createRepository() as never,
+      createLogService() as never,
+      createMeegleAdapter([]) as never,
+      browserLauncher as never,
+      settingsService as never
+    );
+
+    const login = await service.beginLogin();
+
+    expect(login.userCode).toBe("ABC-123");
+    expect(browserLauncher.open).toHaveBeenCalledWith("https://project.feishu.cn/b/auth/mcp?usercode=ABC-123");
+    expect(settingsService.setMeegleLoginState).toHaveBeenCalledWith({ browserPending: true });
+  });
+
+  it("publishes login event to connected frontend instead of opening container-local browser", async () => {
+    const browserLauncher = createBrowserLauncher();
+    const settingsService = createSettingsService();
+    const eventsService = createEventsService();
+    const service = new AdapterService(
+      createRepository() as never,
+      createLogService() as never,
+      createMeegleAdapter([]) as never,
+      browserLauncher as never,
+      settingsService as never,
+      eventsService as never
+    );
+
+    await service.beginLogin();
+
+    expect(eventsService.publishMeegleLoginRequired).toHaveBeenCalledWith(
+      "https://project.feishu.cn/b/auth/mcp?usercode=ABC-123",
+      "ABC-123"
+    );
+    expect(browserLauncher.open).not.toHaveBeenCalled();
   });
 });

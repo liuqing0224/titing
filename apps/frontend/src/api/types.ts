@@ -47,3 +47,8 @@ export type DashboardStats = {
   done: number;
   failed: number;
 };
+
+export type MeegleSyncSettings = {
+  enabled: boolean;
+  intervalMinutes: number;
+};

@@ -3,9 +3,11 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { EventsService } from "../events/events.service";
 import { ExecutionLogService } from "../execution-logs/execution-log.service";
+import { SettingsService } from "../settings/settings.service";
 import { resolveExecutionBranch } from "../tasks/task-branch";
 import { Task } from "../tasks/task.entity";
 import { hasValidExecutionFields } from "../tasks/task-status";
+import { BrowserLauncherService } from "./browser-launcher.service";
 import { MeegleAdapter, MeegleLoginPollInput } from "./meegle.adapter";
 import { mapRawTaskToTaskInput, RawMeegleTask } from "./task-mapper";
 
@@ -30,33 +32,28 @@ export type SyncResult = {
 @Injectable()
 export class AdapterService {
   private readonly logger = new Logger(AdapterService.name);
+  private syncPromise: Promise<SyncResult> | null = null;
+  private loginRecoveryPromise: Promise<void> | null = null;
 
   constructor(
     @InjectRepository(Task)
     private readonly taskRepository: Repository<Task>,
     private readonly executionLogService: ExecutionLogService,
     private readonly meegleAdapter: MeegleAdapter,
+    private readonly browserLauncher: BrowserLauncherService,
+    private readonly settingsService: SettingsService,
     @Optional()
     private readonly eventsService?: EventsService
   ) {}
 
   async sync(): Promise<SyncResult> {
-    this.logger.log("Starting Meegle sync");
-    await this.ensureMeegleAuthenticated();
-    const rawTasks = await this.meegleAdapter.listOpenTasks();
-    this.logger.log(`Fetched ${rawTasks.length} raw task(s) from Meegle`);
-    const result = this.createEmptyResult();
-
-    for (const rawTask of rawTasks) {
-      this.logger.log(`Upserting task externalId=${rawTask.id} title=${JSON.stringify(rawTask.title)}`);
-      const item = await this.upsertRawTask(rawTask);
-      result.items.push(item);
-      result.summary[item.action] += 1;
+    if (!this.syncPromise) {
+      this.syncPromise = this.runSync().finally(() => {
+        this.syncPromise = null;
+      });
     }
 
-    this.logger.log(`Finished Meegle sync: ${JSON.stringify(result.summary)}`);
-
-    return result;
+    return this.syncPromise;
   }
 
   async listRawTasks(): Promise<RawMeegleTask[]> {
@@ -65,7 +62,16 @@ export class AdapterService {
   }
 
   async beginLogin() {
-    return this.meegleAdapter.beginLogin();
+    const login = await this.meegleAdapter.beginLogin();
+    const verificationUri = login.verificationUriComplete || login.verificationUri;
+    const openedViaSse = Boolean(this.eventsService?.hasSubscribers());
+    if (openedViaSse) {
+      this.eventsService?.publishMeegleLoginRequired(verificationUri, login.userCode);
+    } else {
+      await this.browserLauncher.open(verificationUri);
+    }
+    await this.settingsService.setMeegleLoginState({ browserPending: true });
+    return login;
   }
 
   async pollLogin(input: MeegleLoginPollInput) {
@@ -207,10 +213,73 @@ export class AdapterService {
     this.eventsService?.publishTaskLifecycle(task.id, task.status, task.agentId);
   }
 
+  private async runSync(): Promise<SyncResult> {
+    this.logger.log("Starting Meegle sync");
+    await this.ensureMeegleAuthenticated();
+    const rawTasks = await this.meegleAdapter.listOpenTasks();
+    this.logger.log(`Fetched ${rawTasks.length} raw task(s) from Meegle`);
+    const result = this.createEmptyResult();
+
+    for (const rawTask of rawTasks) {
+      this.logger.log(`Upserting task externalId=${rawTask.id} title=${JSON.stringify(rawTask.title)}`);
+      const item = await this.upsertRawTask(rawTask);
+      result.items.push(item);
+      result.summary[item.action] += 1;
+    }
+
+    this.logger.log(`Finished Meegle sync: ${JSON.stringify(result.summary)}`);
+    return result;
+  }
+
   private async ensureMeegleAuthenticated(): Promise<void> {
     const authStatus = await this.meegleAdapter.getAuthStatus();
-    if (!authStatus.authenticated) {
-      throw new UnauthorizedException("Meegle login required");
+    if (authStatus.authenticated) {
+      await this.settingsService.setMeegleLoginState({ browserPending: false });
+      return;
     }
+
+    await this.recoverAuthentication();
+  }
+
+  private async recoverAuthentication(): Promise<void> {
+    if (!this.loginRecoveryPromise) {
+      this.loginRecoveryPromise = this.runLoginRecovery().finally(() => {
+        this.loginRecoveryPromise = null;
+      });
+    }
+
+    await this.loginRecoveryPromise;
+  }
+
+  private async runLoginRecovery(): Promise<void> {
+    await this.settingsService.setMeegleLoginState({ browserPending: false });
+    const login = await this.beginLogin();
+    this.logger.warn(`Meegle login required; opened browser for deviceCode=${login.deviceCode}`);
+    const deadline = Date.now() + login.expiresIn * 1000;
+
+    while (Date.now() < deadline) {
+      await this.sleep(Math.max(login.interval, 1) * 1000);
+      const status = await this.meegleAdapter.pollLogin({
+        clientId: login.clientId,
+        deviceCode: login.deviceCode,
+        interval: login.interval,
+        expiresIn: login.expiresIn
+      });
+      if (!status.authenticated) {
+        continue;
+      }
+
+      await this.settingsService.setMeegleLoginState({ browserPending: false });
+      return;
+    }
+
+    await this.settingsService.setMeegleLoginState({ browserPending: false });
+    throw new UnauthorizedException("Meegle login timed out");
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      setTimeout(resolve, ms);
+    });
   }
 }

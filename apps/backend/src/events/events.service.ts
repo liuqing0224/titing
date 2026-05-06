@@ -14,14 +14,29 @@ export type TaskLifecycleEvent = {
   timestamp: string;
 };
 
+export type MeegleLoginRequiredEvent = {
+  verificationUri: string;
+  userCode: string;
+  timestamp: string;
+};
+
 @Injectable()
 export class EventsService {
   private readonly events$ = new Subject<MessageEvent>();
   private readonly agentStatusEvents: AgentStatusEvent[] = [];
   private readonly taskLifecycleEvents: TaskLifecycleEvent[] = [];
+  private readonly meegleLoginRequiredEvents: MeegleLoginRequiredEvent[] = [];
+  private subscriberCount = 0;
 
   stream(): Observable<MessageEvent> {
-    return this.events$.asObservable();
+    return new Observable<MessageEvent>((subscriber) => {
+      this.subscriberCount += 1;
+      const subscription = this.events$.subscribe(subscriber);
+      return () => {
+        this.subscriberCount -= 1;
+        subscription.unsubscribe();
+      };
+    });
   }
 
   publishAgentStatus(agentId: string, status: string): void {
@@ -51,11 +66,32 @@ export class EventsService {
     });
   }
 
+  publishMeegleLoginRequired(verificationUri: string, userCode: string): void {
+    const event = {
+      verificationUri,
+      userCode,
+      timestamp: new Date().toISOString()
+    };
+    this.meegleLoginRequiredEvents.push(event);
+    this.events$.next({
+      type: "meegle.login_required",
+      data: event
+    });
+  }
+
   getAgentStatusEvents(): AgentStatusEvent[] {
     return this.agentStatusEvents;
   }
 
   getTaskLifecycleEvents(): TaskLifecycleEvent[] {
     return this.taskLifecycleEvents;
+  }
+
+  getMeegleLoginRequiredEvents(): MeegleLoginRequiredEvent[] {
+    return this.meegleLoginRequiredEvents;
+  }
+
+  hasSubscribers(): boolean {
+    return this.subscriberCount > 0;
   }
 }

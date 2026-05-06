@@ -1,13 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { beginMeegleLogin, pollMeegleLogin, syncMeegle } from "../api/adapter";
+import { syncMeegle } from "../api/adapter";
 import { DashboardPage } from "./DashboardPage";
 
 vi.mock("../api/adapter", () => ({
-  syncMeegle: vi.fn(),
-  beginMeegleLogin: vi.fn(),
-  pollMeegleLogin: vi.fn()
+  syncMeegle: vi.fn()
 }));
 
 describe("DashboardPage", () => {
@@ -15,24 +13,8 @@ describe("DashboardPage", () => {
     vi.restoreAllMocks();
   });
 
-  it("opens browser login when Meegle sync requires authentication", async () => {
-    vi.mocked(syncMeegle).mockRejectedValue(new Error("Meegle login required"));
-    vi.mocked(beginMeegleLogin).mockResolvedValue({
-      clientId: "client",
-      deviceCode: "device",
-      expiresIn: 1,
-      interval: 0,
-      userCode: "ABC-123",
-      verificationUri: "https://project.feishu.cn/b/auth/mcp",
-      verificationUriComplete: "https://project.feishu.cn/b/auth/mcp?usercode=ABC-123"
-    });
-    vi.mocked(pollMeegleLogin).mockResolvedValue({
-      authenticated: true,
-      host: "project.feishu.cn"
-    });
-    vi.mocked(syncMeegle)
-      .mockRejectedValueOnce(new Error("Meegle login required"))
-      .mockResolvedValueOnce({
+  it("uses backend sync flow and shows success summary", async () => {
+    vi.mocked(syncMeegle).mockResolvedValue({
         summary: {
           created: 1,
           updated: 0,
@@ -42,15 +24,17 @@ describe("DashboardPage", () => {
         },
         items: []
       });
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => undefined);
+    const saveSettings = vi.fn(async () => undefined);
 
     render(
       <DashboardPage
         stats={null}
         agents={[]}
         tasks={[]}
+        meegleSyncSettings={{ enabled: true, intervalMinutes: 5 }}
         refreshAll={vi.fn(async () => undefined)}
+        onSaveMeegleSyncSettings={saveSettings}
         onOpenTask={vi.fn()}
       />
     );
@@ -58,16 +42,35 @@ describe("DashboardPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "同步 Meegle" }));
 
     await waitFor(() => {
-      expect(beginMeegleLogin).toHaveBeenCalled();
-      expect(pollMeegleLogin).toHaveBeenCalled();
-      expect(openSpy).toHaveBeenCalledWith(
-        "https://project.feishu.cn/b/auth/mcp?usercode=ABC-123",
-        "_blank",
-        "noopener,noreferrer"
-      );
-      expect(alertSpy).toHaveBeenCalledWith(
-        "已打开 Meegle 登录页面，系统会自动等待授权完成。验证码：ABC-123"
-      );
+      expect(syncMeegle).toHaveBeenCalled();
+      expect(alertSpy).toHaveBeenCalledWith("sync: created 1, updated 0, failed 0, recovered 0");
+    });
+  });
+
+  it("saves sync settings from the dashboard form", async () => {
+    const saveSettings = vi.fn(async () => undefined);
+    vi.spyOn(window, "alert").mockImplementation(() => undefined);
+
+    render(
+      <DashboardPage
+        stats={null}
+        agents={[]}
+        tasks={[]}
+        meegleSyncSettings={{ enabled: true, intervalMinutes: 5 }}
+        refreshAll={vi.fn(async () => undefined)}
+        onSaveMeegleSyncSettings={saveSettings}
+        onOpenTask={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByDisplayValue("5"), { target: { value: "10" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存自动同步配置" }));
+
+    await waitFor(() => {
+      expect(saveSettings).toHaveBeenCalledWith({
+        enabled: true,
+        intervalMinutes: 10
+      });
     });
   });
 });

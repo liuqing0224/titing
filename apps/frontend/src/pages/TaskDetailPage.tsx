@@ -53,32 +53,44 @@ export function TaskDetailPage({ task, onBack, onOpenTask, refreshAll }: TaskDet
         />
       </section>
 
-      <section className="panel">
-        <div className="panel-header">
-          <div>
-            <p className="eyebrow">EXECUTION CONTEXT</p>
-            <h3>补充信息</h3>
+      <div className="layout-split detail-split">
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">EXECUTION CONTEXT</p>
+              <h3>补充信息</h3>
+            </div>
           </div>
-        </div>
-        <dl className="meta-grid">
-          <div>
-            <dt>External ID</dt>
-            <dd>{task.externalId ?? "-"}</dd>
+          <dl className="meta-grid">
+            <div>
+              <dt>External ID</dt>
+              <dd>{task.externalId ?? "-"}</dd>
+            </div>
+            <div>
+              <dt>Retry Count</dt>
+              <dd>{task.retryCount}</dd>
+            </div>
+            <div>
+              <dt>Agent ID</dt>
+              <dd>{task.agentId ?? "-"}</dd>
+            </div>
+            <div>
+              <dt>Status</dt>
+              <dd>{task.status}</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">TASK PROMPT</p>
+              <h3>执行指令</h3>
+            </div>
           </div>
-          <div>
-            <dt>Instruction</dt>
-            <dd>{task.instruction ?? "-"}</dd>
-          </div>
-          <div>
-            <dt>Retry Count</dt>
-            <dd>{task.retryCount}</dd>
-          </div>
-          <div>
-            <dt>Agent ID</dt>
-            <dd>{task.agentId ?? "-"}</dd>
-          </div>
-        </dl>
-      </section>
+          <div className="text-panel">{task.instruction ?? "暂无执行指令"}</div>
+        </section>
+      </div>
       {logs ? <ExecutionLogModal logs={logs} onClose={() => setLogs(null)} /> : null}
     </div>
   );
