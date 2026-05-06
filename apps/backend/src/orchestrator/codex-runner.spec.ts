@@ -38,10 +38,17 @@ describe("CodexRunner", () => {
     "### Brainstorm",
     "",
       "```text",
-      "使用 `brainstorm` 技能，根据以下需求生成需求澄清文档：",
+      "使用 `brainstorm` 技能，根据以下需求直接生成需求澄清文档：",
       "{{taskPrompt}}",
       "",
-      "输出文件保存到 `docs/{{gitBranch}}/brainstorm.md`。",
+      "严格要求：",
+      "1. 不要向用户追问问题，不要在 stdout 中输出待确认问题。",
+      "2. 如果信息不完整，基于现有代码和需求做最保守假设，并在文档中单独列出“假设与风险”。",
+      "3. 必须产出文件 `docs/{{gitBranch}}/brainstorm.md`，即使只能生成初稿也必须落盘。",
+      "4. 文档至少包含：目标、现状、改动范围、关键假设、风险点、待验证项。",
+      "5. 输出完成后，在最终回复里仅用一句话说明文档已生成，不要输出大段分析内容。",
+      "",
+      "项目信息：{{projectName}} @ {{gitWorktreePath}}",
       "```",
       "",
       "推荐配置：",
@@ -144,10 +151,17 @@ describe("CodexRunner", () => {
       "-c",
       "model_reasoning_effort=\"medium\"",
       [
-        "使用 `brainstorm` 技能，根据以下需求生成需求澄清文档：",
+        "使用 `brainstorm` 技能，根据以下需求直接生成需求澄清文档：",
         "Implement the feature",
         "",
-        "输出文件保存到 `docs/feature/demo/brainstorm.md`。"
+        "严格要求：",
+        "1. 不要向用户追问问题，不要在 stdout 中输出待确认问题。",
+        "2. 如果信息不完整，基于现有代码和需求做最保守假设，并在文档中单独列出“假设与风险”。",
+        "3. 必须产出文件 `docs/feature/demo/brainstorm.md`，即使只能生成初稿也必须落盘。",
+        "4. 文档至少包含：目标、现状、改动范围、关键假设、风险点、待验证项。",
+        "5. 输出完成后，在最终回复里仅用一句话说明文档已生成，不要输出大段分析内容。",
+        "",
+        "项目信息：repo @ /workspace/demo/repo"
       ].join("\n")
     ], expect.any(Object));
     expect(processRunner.run).toHaveBeenNthCalledWith(4, "/usr/bin/docker", [
