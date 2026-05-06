@@ -14,6 +14,8 @@ RUN npm run build -w apps/frontend
 
 FROM node:22-alpine AS runner
 WORKDIR /app
+ENV TZ=Asia/Shanghai
+RUN apk add --no-cache tzdata
 RUN npm install -g serve
 COPY --from=build /app/apps/frontend/dist apps/frontend/dist
 EXPOSE 5173

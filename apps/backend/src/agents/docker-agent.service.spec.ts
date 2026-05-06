@@ -34,8 +34,6 @@ describe("DockerAgentService", () => {
 
     expect(runner.run).toHaveBeenNthCalledWith(1, "/usr/bin/docker", [
       "inspect",
-      "--format",
-      "{{.Id}} {{.State.Running}}",
       "agent-1"
     ]);
     expect(runner.run).toHaveBeenNthCalledWith(2, "/usr/bin/docker", [
@@ -43,6 +41,8 @@ describe("DockerAgentService", () => {
       "-d",
       "--name",
       "agent-1",
+      "-e",
+      "TZ=Asia/Shanghai",
       "-v",
       "/tmp/workspaces:/workspace",
       "autodev-agent-runner:local",
@@ -77,6 +77,8 @@ describe("DockerAgentService", () => {
       "-d",
       "--name",
       "agent-2",
+      "-e",
+      "TZ=Asia/Shanghai",
       "-v",
       "/tmp/workspaces:/workspace",
       "-v",
@@ -97,7 +99,16 @@ describe("DockerAgentService", () => {
     const runner = {
       run: jest
         .fn()
-        .mockResolvedValueOnce({ stdout: "container-1 false\n", stderr: "" })
+        .mockResolvedValueOnce({
+          stdout: JSON.stringify([
+            {
+              Id: "container-1",
+              State: { Running: false },
+              Mounts: [{ Source: "/tmp/autodev-agent/workspaces", Destination: "/workspace", RW: true }]
+            }
+          ]),
+          stderr: ""
+        })
         .mockResolvedValueOnce({ stdout: "container-1\n", stderr: "" })
     };
     const service = new DockerAgentService(createConfigService({}) as never, runner);
@@ -106,6 +117,52 @@ describe("DockerAgentService", () => {
 
     expect(runner.run).toHaveBeenNthCalledWith(2, "/usr/bin/docker", ["start", "agent-1"]);
     expect(result).toEqual({ containerId: "container-1", running: true });
+  });
+
+  it("recreates an existing container when required mounts are missing", async () => {
+    const runner = {
+      run: jest
+        .fn()
+        .mockResolvedValueOnce({
+          stdout: JSON.stringify([
+            {
+              Id: "container-old",
+              State: { Running: true },
+              Mounts: [{ Source: "/tmp/workspaces", Destination: "/workspace", RW: true }]
+            }
+          ]),
+          stderr: ""
+        })
+        .mockResolvedValueOnce({ stdout: "agent-2\n", stderr: "" })
+        .mockResolvedValueOnce({ stdout: "container-new\n", stderr: "" })
+    };
+    const service = new DockerAgentService(
+      createConfigService({
+        CODEX_WORKDIR: "/tmp/workspaces",
+        HOST_CODEX_HOME: "/Users/l/.codex"
+      }) as never,
+      runner
+    );
+
+    const result = await service.ensureContainer(createAgent({ containerName: "agent-2" }));
+
+    expect(runner.run).toHaveBeenNthCalledWith(2, "/usr/bin/docker", ["rm", "-f", "agent-2"]);
+    expect(runner.run).toHaveBeenNthCalledWith(3, "/usr/bin/docker", [
+      "run",
+      "-d",
+      "--name",
+      "agent-2",
+      "-e",
+      "TZ=Asia/Shanghai",
+      "-v",
+      "/tmp/workspaces:/workspace",
+      "-v",
+      "/Users/l/.codex:/root/.codex",
+      "autodev-agent-runner:local",
+      "sleep",
+      "infinity"
+    ]);
+    expect(result).toEqual({ containerId: "container-new", running: true });
   });
 
   it("restarts an existing container", async () => {

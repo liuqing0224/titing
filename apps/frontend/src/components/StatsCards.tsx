@@ -15,10 +15,10 @@ export function StatsCards({ stats }: StatsCardsProps) {
   };
 
   return (
-    <section className="grid" aria-label="任务统计">
+    <section className="stats-grid" aria-label="任务统计">
       {Object.entries(values).map(([key, value]) => (
-        <article className="card stat" key={key}>
-          <span>{key}</span>
+        <article className="card stat-card" key={key}>
+          <span className="eyebrow">{key}</span>
           <strong>{value}</strong>
         </article>
       ))}

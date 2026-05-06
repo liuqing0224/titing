@@ -134,7 +134,6 @@ describe("CodexRunner", () => {
       "agent-1",
       "codex-dev",
       "exec",
-      "--ignore-user-config",
       "--ignore-rules",
       "--sandbox",
       "danger-full-access",
@@ -158,7 +157,6 @@ describe("CodexRunner", () => {
       "agent-1",
       "codex-dev",
       "exec",
-      "--ignore-user-config",
       "--ignore-rules",
       "--sandbox",
       "danger-full-access",
@@ -260,6 +258,29 @@ describe("CodexRunner", () => {
     expect(brainstormArgs).toContain("model_providers.rightcode.requires_openai_auth=true");
     expect(brainstormArgs).toContain("gpt-5.4-medium");
     expect(brainstormArgs).toContain("model_reasoning_effort=\"medium\"");
+  });
+
+  it("can explicitly ignore user config when configured", async () => {
+    const processRunner = {
+      run: jest
+        .fn()
+        .mockResolvedValueOnce({ stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ stdout: "brainstormed", stderr: "" })
+        .mockResolvedValueOnce({ stdout: "mrd written", stderr: "" })
+    };
+    const runner = new CodexRunner(
+      createConfigService({
+        CODEX_CLI_BIN: "codex-dev",
+        CODEX_IGNORE_USER_CONFIG: "true"
+      }) as never,
+      processRunner
+    );
+
+    await runner.run(createTask(), createAgent());
+
+    const brainstormArgs = processRunner.run.mock.calls[2][1] as string[];
+    expect(brainstormArgs).toContain("--ignore-user-config");
   });
 
   it("re-runs loop-enabled nodes in place before continuing to the next node", async () => {

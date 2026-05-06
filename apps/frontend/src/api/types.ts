@@ -14,6 +14,7 @@ export type Task = {
   instruction: string | null;
   retryCount: number;
   agentId: string | null;
+  createdAt: string;
   updatedAt: string;
 };
 

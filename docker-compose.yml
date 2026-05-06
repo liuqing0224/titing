@@ -3,6 +3,8 @@ services:
     image: postgres:15
     container_name: autodev-postgres
     environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      PGTZ: ${TZ:-Asia/Shanghai}
       POSTGRES_USER: ${DATABASE_USER:-autodev}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-autodev}
       POSTGRES_DB: ${DATABASE_NAME:-autodev}
@@ -24,6 +26,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      TZ: ${TZ:-Asia/Shanghai}
       DATABASE_HOST: postgres
       DATABASE_PORT: 5432
       DATABASE_USER: ${DATABASE_USER:-autodev}
@@ -66,6 +69,7 @@ services:
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:3000/api}
     environment:
+      TZ: ${TZ:-Asia/Shanghai}
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:3000/api}
     ports:
       - "5173:5173"

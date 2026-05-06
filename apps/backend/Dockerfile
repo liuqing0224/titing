@@ -13,7 +13,8 @@ RUN npm run build -w apps/backend
 FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-RUN apk add --no-cache docker-cli git openssh-client
+ENV TZ=Asia/Shanghai
+RUN apk add --no-cache docker-cli git openssh-client tzdata
 RUN npm install -g @lark-project/meegle
 COPY package.json package-lock.json ./
 COPY apps/backend/package.json apps/backend/package.json

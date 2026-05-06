@@ -51,6 +51,7 @@ describe("DashboardPage", () => {
         agents={[]}
         tasks={[]}
         refreshAll={vi.fn(async () => undefined)}
+        onOpenTask={vi.fn()}
       />
     );
 

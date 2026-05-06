@@ -107,6 +107,7 @@ export class CodexRunner {
     const timeout = Number(this.configService.get<string>("CODEX_TIMEOUT_MS", "1800000"));
     const workspaceRoot = this.configService.get<string>("CODEX_WORKDIR", process.cwd());
     const executionContext = this.getExecutionContext(task);
+    this.logCodexExecConfig();
     this.logger.log(
       `Task ${task.id} starting on agent ${agent.id}: repo=${executionContext.repo}, branch=${executionContext.branch}, cwd=${executionContext.containerCwd}`
     );
@@ -653,7 +654,7 @@ export class CodexRunner {
     const args = [
       cliBin,
       "exec",
-      "--ignore-user-config",
+      ...this.getUserConfigArgs(),
       "--ignore-rules",
       "--sandbox",
       "danger-full-access",
@@ -694,6 +695,20 @@ export class CodexRunner {
     );
 
     return args;
+  }
+
+  private getUserConfigArgs(): string[] {
+    const rawValue = this.configService.get<string>("CODEX_IGNORE_USER_CONFIG", "false");
+    return rawValue === "true" ? ["--ignore-user-config"] : [];
+  }
+
+  private logCodexExecConfig(): void {
+    const ignoreUserConfig = this.getUserConfigArgs().includes("--ignore-user-config");
+    const provider = this.configService.get<string | undefined>("CODEX_MODEL_PROVIDER", undefined);
+    const model = this.configService.get<string | undefined>("CODEX_MODEL", undefined);
+    this.logger.log(
+      `Codex exec config: ignoreUserConfig=${String(ignoreUserConfig)}, model=${model ?? "default"}, provider=${provider ?? "default"}`
+    );
   }
 
   private toTomlString(value: string): string {

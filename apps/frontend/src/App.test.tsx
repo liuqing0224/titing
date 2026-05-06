@@ -5,6 +5,7 @@ import App from "./App";
 
 vi.mock("./api/tasks", () => ({
   listTasks: vi.fn(async () => []),
+  getTask: vi.fn(async () => ({})),
   listTaskLogs: vi.fn(async () => []),
   retryTask: vi.fn(async () => ({})),
   updateTaskExecutionFields: vi.fn(async () => ({}))

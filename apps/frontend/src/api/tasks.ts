@@ -18,6 +18,10 @@ export function listTasks(filters: TaskFilters = {}): Promise<Task[]> {
   return apiRequest<Task[]>(`/tasks${query ? `?${query}` : ""}`);
 }
 
+export function getTask(taskId: string): Promise<Task> {
+  return apiRequest<Task>(`/tasks/${taskId}`);
+}
+
 export function updateTaskExecutionFields(
   taskId: string,
   input: { repo: string; branch: string; instruction: string }

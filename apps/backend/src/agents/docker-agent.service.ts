@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { Injectable, Optional } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Agent } from "./agent.entity";
 
@@ -20,6 +20,14 @@ export type DockerContainerState = {
   running: boolean;
 };
 
+type ContainerInspection = DockerContainerState & {
+  mounts: Array<{
+    source: string;
+    destination: string;
+    readOnly: boolean;
+  }>;
+};
+
 class ExecFileDockerRunner implements DockerRunner {
   async run(command: string, args: string[]): Promise<DockerRunResult> {
     return execFileAsync(command, args);
@@ -28,6 +36,8 @@ class ExecFileDockerRunner implements DockerRunner {
 
 @Injectable()
 export class DockerAgentService {
+  private readonly logger = new Logger(DockerAgentService.name);
+
   constructor(
     private readonly configService: ConfigService,
     @Optional()
@@ -36,31 +46,27 @@ export class DockerAgentService {
 
   async ensureContainer(agent: Agent): Promise<DockerContainerState> {
     const dockerBin = this.getDockerBin();
+    const expectedMounts = this.getExpectedMounts();
+    this.logExpectedMountSummary(agent, expectedMounts);
     try {
       const inspected = await this.inspectContainer(dockerBin, agent.containerName);
-      if (!inspected.running) {
-        await this.dockerRunner.run(dockerBin, ["start", agent.containerName]);
-        return { ...inspected, running: true };
+      if (!this.hasExpectedMounts(inspected, expectedMounts)) {
+        this.logger.warn(
+          `Container ${agent.containerName} is missing required mounts; recreating to refresh auth/config mounts`
+        );
+        await this.dockerRunner.run(dockerBin, ["rm", "-f", agent.containerName]);
+        return this.createContainer(dockerBin, agent, expectedMounts);
       }
-      return inspected;
+      if (!inspected.running) {
+        this.logger.log(`Starting existing container ${agent.containerName} with verified mount set`);
+        await this.dockerRunner.run(dockerBin, ["start", agent.containerName]);
+        return { containerId: inspected.containerId, running: true };
+      }
+      this.logger.log(`Reusing running container ${agent.containerName} with verified mount set`);
+      return { containerId: inspected.containerId, running: inspected.running };
     } catch {
-      const args = [
-        "run",
-        "-d",
-        "--name",
-        agent.containerName,
-        "-v",
-        `${this.getWorkspaceRoot()}:/workspace`,
-        ...this.getOptionalMountArgs(),
-        this.getAgentImage(),
-        "sleep",
-        "infinity"
-      ];
-      const { stdout } = await this.dockerRunner.run(dockerBin, args);
-      return {
-        containerId: stdout.trim(),
-        running: true
-      };
+      this.logger.log(`Creating container ${agent.containerName} with configured mount set`);
+      return this.createContainer(dockerBin, agent, expectedMounts);
     }
   }
 
@@ -68,17 +74,29 @@ export class DockerAgentService {
     await this.dockerRunner.run(this.getDockerBin(), ["restart", agent.containerName]);
   }
 
-  private async inspectContainer(command: string, containerName: string): Promise<DockerContainerState> {
+  private async inspectContainer(command: string, containerName: string): Promise<ContainerInspection> {
     const { stdout } = await this.dockerRunner.run(command, [
       "inspect",
-      "--format",
-      "{{.Id}} {{.State.Running}}",
       containerName
     ]);
-    const [containerId, running] = stdout.trim().split(/\s+/);
+    const inspection = JSON.parse(stdout) as Array<{
+      Id: string;
+      State: { Running: boolean };
+      Mounts?: Array<{
+        Source: string;
+        Destination: string;
+        RW: boolean;
+      }>;
+    }>;
+    const [container] = inspection;
     return {
-      containerId,
-      running: running === "true"
+      containerId: container.Id,
+      running: container.State.Running,
+      mounts: (container.Mounts ?? []).map((mount) => ({
+        source: mount.Source,
+        destination: mount.Destination,
+        readOnly: !mount.RW
+      }))
     };
   }
 
@@ -94,26 +112,90 @@ export class DockerAgentService {
     return this.configService.get<string>("CODEX_WORKDIR", "/tmp/autodev-agent/workspaces");
   }
 
-  private getOptionalMountArgs(): string[] {
-    const mounts: string[] = [];
+  private getContainerTimezone(): string {
+    return this.configService.get<string>("TZ", "Asia/Shanghai");
+  }
+
+  private async createContainer(
+    dockerBin: string,
+    agent: Agent,
+    mounts: Array<{ source: string; destination: string; readOnly: boolean }>
+  ): Promise<DockerContainerState> {
+    const args = [
+      "run",
+      "-d",
+      "--name",
+      agent.containerName,
+      "-e",
+      `TZ=${this.getContainerTimezone()}`,
+      ...mounts.flatMap((mount) => ["-v", this.toDockerMountArg(mount)]),
+      this.getAgentImage(),
+      "sleep",
+      "infinity"
+    ];
+    const { stdout } = await this.dockerRunner.run(dockerBin, args);
+    return {
+      containerId: stdout.trim(),
+      running: true
+    };
+  }
+
+  private getExpectedMounts(): Array<{ source: string; destination: string; readOnly: boolean }> {
+    const mounts = [
+      {
+        source: this.getWorkspaceRoot(),
+        destination: "/workspace",
+        readOnly: false
+      }
+    ];
     const codexHome = this.configService.get<string>("HOST_CODEX_HOME", "").trim();
     const gitConfig = this.configService.get<string>("HOST_GITCONFIG", "").trim();
     const sshDir = this.configService.get<string>("HOST_SSH_DIR", "").trim();
     const projectsRoot = this.configService.get<string>("HOST_PROJECTS_ROOT", "").trim();
 
     if (codexHome) {
-      mounts.push("-v", `${codexHome}:/root/.codex`);
+      mounts.push({ source: codexHome, destination: "/root/.codex", readOnly: false });
     }
     if (gitConfig) {
-      mounts.push("-v", `${gitConfig}:/root/.gitconfig:ro`);
+      mounts.push({ source: gitConfig, destination: "/root/.gitconfig", readOnly: true });
     }
     if (sshDir) {
-      mounts.push("-v", `${sshDir}:/root/.ssh:ro`);
+      mounts.push({ source: sshDir, destination: "/root/.ssh", readOnly: true });
     }
     if (projectsRoot) {
-      mounts.push("-v", `${projectsRoot}:${projectsRoot}`);
+      mounts.push({ source: projectsRoot, destination: projectsRoot, readOnly: false });
     }
 
     return mounts;
+  }
+
+  private hasExpectedMounts(
+    inspection: ContainerInspection,
+    expectedMounts: Array<{ source: string; destination: string; readOnly: boolean }>
+  ): boolean {
+    return expectedMounts.every((expected) =>
+      inspection.mounts.some(
+        (actual) =>
+          actual.source === expected.source &&
+          actual.destination === expected.destination &&
+          actual.readOnly === expected.readOnly
+      )
+    );
+  }
+
+  private toDockerMountArg(mount: { source: string; destination: string; readOnly: boolean }): string {
+    return `${mount.source}:${mount.destination}${mount.readOnly ? ":ro" : ""}`;
+  }
+
+  private logExpectedMountSummary(
+    agent: Agent,
+    mounts: Array<{ source: string; destination: string; readOnly: boolean }>
+  ): void {
+    const codexMount = mounts.find((mount) => mount.destination === "/root/.codex");
+    this.logger.log(
+      `Container ${agent.containerName} mount check: codexConfigMounted=${String(Boolean(codexMount))}, mounts=${mounts
+        .map((mount) => `${mount.source}->${mount.destination}${mount.readOnly ? ":ro" : ""}`)
+        .join(", ")}`
+    );
   }
 }

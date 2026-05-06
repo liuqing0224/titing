@@ -7,12 +7,13 @@ import { TaskCard } from "../components/TaskCard";
 type TasksPageProps = {
   tasks: Task[];
   refreshAll: () => Promise<void>;
+  onOpenTask: (taskId: string) => void;
 };
 
 const STATUSES: Array<"" | TaskStatus> = ["", "pending", "queued", "running", "done", "failed"];
 const PRIORITIES: Array<"" | TaskPriority> = ["", "high", "medium", "low"];
 
-export function TasksPage({ tasks, refreshAll }: TasksPageProps) {
+export function TasksPage({ tasks, refreshAll, onOpenTask }: TasksPageProps) {
   const [status, setStatus] = useState<"" | TaskStatus>("");
   const [priority, setPriority] = useState<"" | TaskPriority>("");
   const [logs, setLogs] = useState<ExecutionLog[] | null>(null);
@@ -22,11 +23,24 @@ export function TasksPage({ tasks, refreshAll }: TasksPageProps) {
   });
 
   return (
-    <main>
-      <h2>任务列表</h2>
-      <div className="filters">
-        <label>
-          status
+    <div className="page-stack">
+      <section className="hero-panel compact">
+        <div>
+          <p className="eyebrow">TASK OPERATIONS</p>
+          <h3>任务列表</h3>
+          <p className="hero-copy">
+            用状态和优先级快速切片任务池，把查看日志、编辑执行字段和失败重试收敛到同一张卡片。
+          </p>
+        </div>
+        <button className="ghost-button" onClick={() => void refreshAll()} type="button">
+          重新拉取
+        </button>
+      </section>
+
+      <section className="panel">
+        <div className="filters">
+          <label className="field">
+            <span>status</span>
           <select value={status} onChange={(event) => setStatus(event.target.value as "" | TaskStatus)}>
             {STATUSES.map((value) => (
               <option key={value || "all"} value={value}>
@@ -34,9 +48,9 @@ export function TasksPage({ tasks, refreshAll }: TasksPageProps) {
               </option>
             ))}
           </select>
-        </label>
-        <label>
-          priority
+          </label>
+          <label className="field">
+            <span>priority</span>
           <select value={priority} onChange={(event) => setPriority(event.target.value as "" | TaskPriority)}>
             {PRIORITIES.map((value) => (
               <option key={value || "all"} value={value}>
@@ -44,13 +58,19 @@ export function TasksPage({ tasks, refreshAll }: TasksPageProps) {
               </option>
             ))}
           </select>
-        </label>
-      </div>
+          </label>
+          <div className="filter-summary">
+            <span className="terminal-chip">{filteredTasks.length} visible</span>
+          </div>
+        </div>
+      </section>
+
       <section className="list">
         {filteredTasks.map((task) => (
           <TaskCard
             key={task.id}
             task={task}
+            onOpenDetail={onOpenTask}
             onViewLogs={async (taskId) => setLogs(await listTaskLogs(taskId))}
             onRetry={async (taskId) => {
               await retryTask(taskId);
@@ -62,8 +82,9 @@ export function TasksPage({ tasks, refreshAll }: TasksPageProps) {
             }}
           />
         ))}
+        {filteredTasks.length === 0 ? <article className="panel muted-copy">没有符合当前筛选条件的任务。</article> : null}
       </section>
       {logs ? <ExecutionLogModal logs={logs} onClose={() => setLogs(null)} /> : null}
-    </main>
+    </div>
   );
 }
