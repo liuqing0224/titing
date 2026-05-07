@@ -119,6 +119,35 @@ describe("DockerAgentService", () => {
     expect(result).toEqual({ containerId: "container-1", running: true });
   });
 
+  it("executes runtime commands inside the agent container", async () => {
+    const runner = {
+      run: jest.fn(async () => ({ stdout: "ok", stderr: "" }))
+    };
+    const service = new DockerAgentService(createConfigService({ DOCKER_BIN: "/usr/bin/docker" }) as never, runner);
+
+    const result = await service.runCommand(createAgent(), {
+      cwd: "/workspace/demo/repo",
+      command: "git",
+      args: ["status", "--short"],
+      options: {
+        cwd: "/tmp/workspaces/demo/repo",
+        maxBuffer: 1024,
+        timeout: 1000
+      }
+    });
+
+    expect(runner.run).toHaveBeenCalledWith(
+      "/usr/bin/docker",
+      ["exec", "-w", "/workspace/demo/repo", "agent-1", "git", "status", "--short"],
+      {
+        cwd: "/tmp/workspaces/demo/repo",
+        maxBuffer: 1024,
+        timeout: 1000
+      }
+    );
+    expect(result).toEqual({ stdout: "ok", stderr: "" });
+  });
+
   it("recreates an existing container when required mounts are missing", async () => {
     const runner = {
       run: jest

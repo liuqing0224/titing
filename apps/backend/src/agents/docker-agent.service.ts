@@ -2,6 +2,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { AgentRuntimePlugin, RuntimeCommand, RuntimeCommandResult } from "../plugins/agent-runtime.plugin";
+import type { ProcessRunOptions } from "../orchestrator/codex-runner";
 import { Agent } from "./agent.entity";
 
 const execFileAsync = promisify(execFile);
@@ -12,7 +14,7 @@ export type DockerRunResult = {
 };
 
 export type DockerRunner = {
-  run(command: string, args: string[]): Promise<DockerRunResult>;
+  run(command: string, args: string[], options?: ProcessRunOptions): Promise<DockerRunResult>;
 };
 
 export type DockerContainerState = {
@@ -29,13 +31,18 @@ type ContainerInspection = DockerContainerState & {
 };
 
 class ExecFileDockerRunner implements DockerRunner {
-  async run(command: string, args: string[]): Promise<DockerRunResult> {
-    return execFileAsync(command, args);
+  async run(command: string, args: string[], options?: ProcessRunOptions): Promise<DockerRunResult> {
+    const result = await execFileAsync(command, args, options);
+    return {
+      stdout: String(result.stdout),
+      stderr: String(result.stderr)
+    };
   }
 }
 
 @Injectable()
-export class DockerAgentService {
+export class DockerAgentService implements AgentRuntimePlugin {
+  readonly runtime = "docker";
   private readonly logger = new Logger(DockerAgentService.name);
 
   constructor(
@@ -68,6 +75,21 @@ export class DockerAgentService {
       this.logger.log(`Creating container ${agent.containerName} with configured mount set`);
       return this.createContainer(dockerBin, agent, expectedMounts);
     }
+  }
+
+  ensureRuntime(agent: Agent): Promise<DockerContainerState> {
+    return this.ensureContainer(agent);
+  }
+
+  async runCommand(agent: Agent, command: RuntimeCommand): Promise<RuntimeCommandResult> {
+    return this.dockerRunner.run(this.getDockerBin(), [
+      "exec",
+      "-w",
+      command.cwd,
+      agent.containerName,
+      command.command,
+      ...command.args
+    ], command.options);
   }
 
   async restartContainer(agent: Agent): Promise<void> {

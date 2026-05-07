@@ -1,9 +1,10 @@
-import { Injectable, NotFoundException, OnApplicationBootstrap, Optional } from "@nestjs/common";
+import { Inject, Injectable, NotFoundException, OnApplicationBootstrap, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { EventsService } from "../events/events.service";
-import { DockerAgentService } from "./docker-agent.service";
+import { AgentRuntimePlugin } from "../plugins/agent-runtime.plugin";
+import { AGENT_RUNTIME_PLUGIN } from "../plugins/plugin.tokens";
 import { Agent } from "./agent.entity";
 
 @Injectable()
@@ -15,7 +16,8 @@ export class AgentService implements OnApplicationBootstrap {
     @Optional()
     private readonly configService?: ConfigService,
     @Optional()
-    private readonly dockerAgentService?: DockerAgentService
+    @Inject(AGENT_RUNTIME_PLUGIN)
+    private readonly agentRuntime?: AgentRuntimePlugin
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -29,7 +31,7 @@ export class AgentService implements OnApplicationBootstrap {
       if (agent.status === "idle" || (agent.status === "offline" && !agent.taskId)) {
         agent.status = "idle";
         agent.heartbeatAt = new Date();
-        await this.ensureDockerContainer(agent);
+        await this.ensureRuntime(agent);
         await this.agentRepository.save(agent);
       }
     }
@@ -45,7 +47,7 @@ export class AgentService implements OnApplicationBootstrap {
         startedAt: new Date(),
         heartbeatAt: new Date()
       });
-      await this.ensureDockerContainer(agent);
+      await this.ensureRuntime(agent);
       await this.agentRepository.save(agent);
     }
   }
@@ -104,7 +106,7 @@ export class AgentService implements OnApplicationBootstrap {
     agent.status = "idle";
     agent.taskId = null;
     agent.heartbeatAt = new Date();
-    await this.ensureDockerContainer(agent);
+    await this.ensureRuntime(agent);
     const saved = await this.agentRepository.save(agent);
     this.eventsService.publishAgentStatus(saved.id, saved.status);
     return saved;
@@ -150,13 +152,13 @@ export class AgentService implements OnApplicationBootstrap {
     return offlineAgents;
   }
 
-  private async ensureDockerContainer(agent: Agent): Promise<void> {
-    if (!this.dockerAgentService) {
+  private async ensureRuntime(agent: Agent): Promise<void> {
+    if (!this.agentRuntime) {
       return;
     }
     try {
-      const containerState = await this.dockerAgentService.ensureContainer(agent);
-      agent.containerId = containerState.containerId;
+      const runtimeState = await this.agentRuntime.ensureRuntime(agent);
+      agent.containerId = runtimeState.containerId;
       agent.startedAt = agent.startedAt ?? new Date();
     } catch {
       agent.status = "offline";

@@ -42,23 +42,23 @@ const createEventsService = () => ({
   publishAgentStatus: jest.fn()
 });
 
-const createDockerAgentService = () => ({
-  ensureContainer: jest.fn(async (agent: Agent) => ({
+const createAgentRuntime = () => ({
+  runtime: "docker",
+  ensureRuntime: jest.fn(async (agent: Agent) => ({
     containerId: `${agent.id}-container`,
     running: true
-  })),
-  restartContainer: jest.fn(async () => undefined)
+  }))
 });
 
 describe("AgentService", () => {
   it("precreates an idle agent pool up to the configured size", async () => {
     const repository = createRepository();
-    const dockerAgentService = createDockerAgentService();
+    const agentRuntime = createAgentRuntime();
     const service = new AgentService(
       repository as never,
       createEventsService() as never,
       undefined,
-      dockerAgentService as never
+      agentRuntime as never
     );
 
     await service.ensurePool(2);
@@ -70,23 +70,23 @@ describe("AgentService", () => {
         expect.objectContaining({ id: "agent-2", status: "idle", containerName: "agent-2" })
       ])
     );
-    expect(dockerAgentService.ensureContainer).toHaveBeenCalledTimes(2);
+    expect(agentRuntime.ensureRuntime).toHaveBeenCalledTimes(2);
     expect(repository.store.get("agent-1")?.containerId).toBe("agent-1-container");
   });
 
   it("ensures containers for existing idle agents when refreshing the pool", async () => {
     const repository = createRepository([createAgent({ id: "agent-1", containerId: null })]);
-    const dockerAgentService = createDockerAgentService();
+    const agentRuntime = createAgentRuntime();
     const service = new AgentService(
       repository as never,
       createEventsService() as never,
       undefined,
-      dockerAgentService as never
+      agentRuntime as never
     );
 
     await service.ensurePool(1);
 
-    expect(dockerAgentService.ensureContainer).toHaveBeenCalledWith(
+    expect(agentRuntime.ensureRuntime).toHaveBeenCalledWith(
       expect.objectContaining({ id: "agent-1" })
     );
     expect(repository.store.get("agent-1")?.containerId).toBe("agent-1-container");

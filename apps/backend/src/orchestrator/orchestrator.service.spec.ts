@@ -1,6 +1,6 @@
 import { Agent } from "../agents/agent.entity";
+import { ExecutionContext, ExecutionRunResult } from "../plugins/execution-engine.plugin";
 import { Task } from "../tasks/task.entity";
-import { CodexExecutionContext, CodexRunResult } from "./codex-runner";
 import { OrchestratorService } from "./orchestrator.service";
 
 const createTask = (overrides: Partial<Task> = {}): Task =>
@@ -92,7 +92,7 @@ describe("OrchestratorService", () => {
       "Task execution fields are invalid",
       expect.objectContaining({ missingFields: ["instruction"] })
     );
-    expect(runner.run).not.toHaveBeenCalled();
+    expect(runner.runTask).not.toHaveBeenCalled();
   });
 
   it("marks task done and releases agent when Codex exits successfully", async () => {
@@ -344,14 +344,14 @@ describe("OrchestratorService", () => {
   it("keeps refreshing heartbeat while Codex execution is still running", async () => {
     jest.useFakeTimers();
 
-    let resolveRun: (value: CodexRunResult) => void = () => undefined;
+    let resolveRun: (value: ExecutionRunResult) => void = () => undefined;
     const task = createTask({ id: "auto-1", status: "queued" });
     const agent = createAgent({ id: "agent-1" });
     const taskService = createTaskService([task]);
     const agentService = createAgentService([agent]);
     const runner = {
       getExecutionContext: jest.fn(
-        (runnerTask: Task): CodexExecutionContext => ({
+        (runnerTask: Task): ExecutionContext => ({
           repo: runnerTask.repo,
           branch: runnerTask.branch,
           hostCwd: `${process.cwd()}/${runnerTask.repo}`,
@@ -362,9 +362,9 @@ describe("OrchestratorService", () => {
           workflowPromptsPath: `/workspace/${runnerTask.repo}/knowledge/WORKFLOW_PROMPTS.md`
         })
       ),
-      run: jest.fn(
+      runTask: jest.fn(
         () =>
-          new Promise<CodexRunResult>((resolve) => {
+          new Promise<ExecutionRunResult>((resolve) => {
             resolveRun = resolve;
           })
       )
@@ -405,7 +405,7 @@ describe("OrchestratorService", () => {
   });
 
   it("skips overlapping poll while a previous poll is still running", async () => {
-    let resolveRun: (value: CodexRunResult) => void = () => undefined;
+    let resolveRun: (value: ExecutionRunResult) => void = () => undefined;
     let markRunStarted: () => void = () => undefined;
     const runStarted = new Promise<void>((resolve) => {
       markRunStarted = resolve;
@@ -416,7 +416,7 @@ describe("OrchestratorService", () => {
     const agentService = createAgentService([agent]);
     const runner = {
       getExecutionContext: jest.fn(
-        (runnerTask: Task): CodexExecutionContext => ({
+        (runnerTask: Task): ExecutionContext => ({
           repo: runnerTask.repo,
           branch: runnerTask.branch,
           hostCwd: `${process.cwd()}/${runnerTask.repo}`,
@@ -427,9 +427,9 @@ describe("OrchestratorService", () => {
           workflowPromptsPath: `/workspace/${runnerTask.repo}/knowledge/WORKFLOW_PROMPTS.md`
         })
       ),
-      run: jest.fn(() => {
+      runTask: jest.fn(() => {
         markRunStarted();
-        return new Promise<CodexRunResult>((resolve) => {
+        return new Promise<ExecutionRunResult>((resolve) => {
           resolveRun = resolve;
         });
       })
@@ -463,7 +463,7 @@ describe("OrchestratorService", () => {
     await firstPoll;
 
     expect(agentService.detectOfflineAgents).toHaveBeenCalledTimes(1);
-    expect(runner.run).toHaveBeenCalledTimes(1);
+    expect(runner.runTask).toHaveBeenCalledTimes(1);
   });
 
   it("releases claimed agent when task claim fails", async () => {
@@ -484,7 +484,7 @@ describe("OrchestratorService", () => {
     await service.poll();
 
     expect(agentService.markIdle).toHaveBeenCalledWith("agent-1");
-    expect(runner.run).not.toHaveBeenCalled();
+    expect(runner.runTask).not.toHaveBeenCalled();
   });
 });
 
@@ -549,11 +549,11 @@ function createExecutionLogService() {
 }
 
 function createRunner(
-  result: Partial<CodexRunResult> & Pick<CodexRunResult, "exitCode" | "stdout" | "stderr">
+  result: Partial<ExecutionRunResult> & Pick<ExecutionRunResult, "exitCode" | "stdout" | "stderr">
 ) {
   return {
     getExecutionContext: jest.fn(
-      (task: Task): CodexExecutionContext => ({
+      (task: Task): ExecutionContext => ({
         repo: task.repo,
         branch: task.branch,
         hostCwd: `${process.cwd()}/${task.repo}`,
@@ -564,7 +564,7 @@ function createRunner(
         workflowPromptsPath: `/workspace/${task.repo}/knowledge/WORKFLOW_PROMPTS.md`
       })
     ),
-    run: jest.fn(async (task: Task) => ({
+    runTask: jest.fn(async (task: Task) => ({
       stage: "execute",
       timedOut: false,
       branchCheckedOut: true,

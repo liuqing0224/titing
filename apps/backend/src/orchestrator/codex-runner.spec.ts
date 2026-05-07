@@ -204,6 +204,53 @@ describe("CodexRunner", () => {
     });
   });
 
+  it("delegates command execution to the injected agent runtime plugin", async () => {
+    const processRunner = {
+      run: jest.fn(async () => ({ stdout: "unused", stderr: "" }))
+    };
+    const runtime = {
+      runtime: "docker",
+      ensureRuntime: jest.fn(),
+      runCommand: jest
+        .fn()
+        .mockResolvedValueOnce({ stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ stdout: "brainstormed", stderr: "" })
+        .mockResolvedValueOnce({ stdout: "mrd written", stderr: "" })
+    };
+    const runner = new CodexRunner(
+      createConfigService({
+        CODEX_CLI_BIN: "codex-dev",
+        CODEX_WORKDIR: "/tmp/workspace",
+        CODEX_TIMEOUT_MS: "12345"
+      }) as never,
+      processRunner,
+      runtime
+    );
+
+    await runner.runTask(createTask(), createAgent());
+
+    expect(processRunner.run).not.toHaveBeenCalled();
+    expect(runtime.runCommand).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ id: "agent-1" }),
+      expect.objectContaining({
+        cwd: "/workspace/demo/repo",
+        command: "git",
+        args: ["checkout", "feature/demo"]
+      })
+    );
+    expect(runtime.runCommand).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ id: "agent-1" }),
+      expect.objectContaining({
+        cwd: "/workspace/demo/repo",
+        command: "codex-dev",
+        args: expect.arrayContaining(["exec", "--ignore-rules"])
+      })
+    );
+  });
+
   it("returns non-zero result when one workflow node fails", async () => {
     const processRunner = {
       run: jest
