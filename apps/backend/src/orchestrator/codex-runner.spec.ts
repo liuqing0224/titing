@@ -23,6 +23,10 @@ const createAgent = (): Agent =>
     containerName: "agent-1"
   }) as Agent;
 
+const createExecutionLogService = () => ({
+  append: jest.fn().mockResolvedValue(undefined)
+});
+
 describe("CodexRunner", () => {
   const workflowPromptsContent = [
     "# Workflow",
@@ -249,6 +253,77 @@ describe("CodexRunner", () => {
         args: expect.arrayContaining(["exec", "--ignore-rules"])
       })
     );
+  });
+
+  it("persists workflow node progress when an execution log service is available", async () => {
+    const processRunner = {
+      run: jest
+        .fn()
+        .mockResolvedValueOnce({ stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ stdout: "brainstormed", stderr: "warn" })
+        .mockResolvedValueOnce({ stdout: "mrd written", stderr: "" })
+    };
+    const executionLogService = createExecutionLogService();
+    const runner = new CodexRunner(
+      createConfigService({
+        CODEX_CLI_BIN: "codex"
+      }) as never,
+      processRunner,
+      undefined,
+      executionLogService as never
+    );
+
+    await runner.run(createTask(), createAgent());
+
+    expect(executionLogService.append).toHaveBeenNthCalledWith(1, {
+      taskId: "auto-1",
+      agentId: "agent-1",
+      status: "running",
+      message: "Executing workflow node Brainstorm iteration 1/1",
+      metadata: {
+        node: "Brainstorm",
+        iteration: 1,
+        loopCount: 1
+      }
+    });
+    expect(executionLogService.append).toHaveBeenNthCalledWith(2, {
+      taskId: "auto-1",
+      agentId: "agent-1",
+      status: "running",
+      message: "Completed workflow node Brainstorm iteration 1/1",
+      metadata: {
+        node: "Brainstorm",
+        iteration: 1,
+        loopCount: 1,
+        stdoutLength: 12,
+        stderrLength: 4
+      }
+    });
+    expect(executionLogService.append).toHaveBeenNthCalledWith(3, {
+      taskId: "auto-1",
+      agentId: "agent-1",
+      status: "running",
+      message: "Executing workflow node WriteMRD iteration 1/1",
+      metadata: {
+        node: "WriteMRD",
+        iteration: 1,
+        loopCount: 1
+      }
+    });
+    expect(executionLogService.append).toHaveBeenNthCalledWith(4, {
+      taskId: "auto-1",
+      agentId: "agent-1",
+      status: "running",
+      message: "Completed workflow node WriteMRD iteration 1/1",
+      metadata: {
+        node: "WriteMRD",
+        iteration: 1,
+        loopCount: 1,
+        stdoutLength: 11,
+        stderrLength: 0
+      }
+    });
   });
 
   it("returns non-zero result when one workflow node fails", async () => {

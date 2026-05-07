@@ -4,64 +4,84 @@ export class TaskLifecycle1714406400001 implements MigrationInterface {
   name = "TaskLifecycle1714406400001";
 
   async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`
-      CREATE TABLE "tasks" (
-        "id" varchar NOT NULL,
-        "source" varchar(20) NOT NULL DEFAULT 'meegle',
-        "external_id" varchar(100),
-        "title" varchar(500) NOT NULL,
-        "description" text,
-        "repo" varchar(200) NOT NULL,
-        "branch" varchar(200) NOT NULL DEFAULT 'main',
-        "task_type" varchar(20) NOT NULL DEFAULT 'chore',
-        "priority" varchar(20) NOT NULL DEFAULT 'medium',
-        "status" varchar(20) NOT NULL DEFAULT 'pending',
-        "instruction" text,
-        "constraints" jsonb NOT NULL DEFAULT '[]',
-        "retry_count" integer NOT NULL DEFAULT 0,
-        "claimed_at" timestamp,
-        "started_at" timestamp,
-        "completed_at" timestamp,
-        "agent_id" varchar,
-        "created_at" timestamp NOT NULL DEFAULT now(),
-        "updated_at" timestamp NOT NULL DEFAULT now(),
-        CONSTRAINT "PK_tasks_id" PRIMARY KEY ("id")
-      )
-    `);
+    if (!(await queryRunner.hasTable("tasks"))) {
+      await queryRunner.query(`
+        CREATE TABLE "tasks" (
+          "id" varchar NOT NULL,
+          "source" varchar(20) NOT NULL DEFAULT 'meegle',
+          "external_id" varchar(100),
+          "title" varchar(500) NOT NULL,
+          "description" text,
+          "repo" varchar(200) NOT NULL,
+          "branch" varchar(200) NOT NULL DEFAULT 'main',
+          "task_type" varchar(20) NOT NULL DEFAULT 'chore',
+          "priority" varchar(20) NOT NULL DEFAULT 'medium',
+          "status" varchar(20) NOT NULL DEFAULT 'pending',
+          "instruction" text,
+          "constraints" jsonb NOT NULL DEFAULT '[]',
+          "retry_count" integer NOT NULL DEFAULT 0,
+          "claimed_at" timestamp,
+          "started_at" timestamp,
+          "completed_at" timestamp,
+          "agent_id" varchar,
+          "created_at" timestamp NOT NULL DEFAULT now(),
+          "updated_at" timestamp NOT NULL DEFAULT now(),
+          CONSTRAINT "PK_tasks_id" PRIMARY KEY ("id")
+        )
+      `);
+    }
+
     await queryRunner.query(
-      `CREATE UNIQUE INDEX "IDX_tasks_external_id" ON "tasks" ("external_id") WHERE "external_id" IS NOT NULL`
+      `CREATE UNIQUE INDEX IF NOT EXISTS "IDX_tasks_external_id" ON "tasks" ("external_id") WHERE "external_id" IS NOT NULL`
     );
 
-    await queryRunner.query(`
-      CREATE TABLE "agents" (
-        "id" varchar NOT NULL,
-        "task_id" varchar,
-        "container_id" varchar(100),
-        "container_name" varchar(100) NOT NULL,
-        "status" varchar(20) NOT NULL DEFAULT 'idle',
-        "started_at" timestamp,
-        "heartbeat_at" timestamp NOT NULL,
-        "created_at" timestamp NOT NULL DEFAULT now(),
-        "updated_at" timestamp NOT NULL DEFAULT now(),
-        CONSTRAINT "PK_agents_id" PRIMARY KEY ("id")
-      )
-    `);
+    if (!(await queryRunner.hasTable("agents"))) {
+      await queryRunner.query(`
+        CREATE TABLE "agents" (
+          "id" varchar NOT NULL,
+          "task_id" varchar,
+          "container_id" varchar(100),
+          "container_name" varchar(100) NOT NULL,
+          "status" varchar(20) NOT NULL DEFAULT 'idle',
+          "started_at" timestamp,
+          "heartbeat_at" timestamp NOT NULL,
+          "created_at" timestamp NOT NULL DEFAULT now(),
+          "updated_at" timestamp NOT NULL DEFAULT now(),
+          CONSTRAINT "PK_agents_id" PRIMARY KEY ("id")
+        )
+      `);
+    }
+
+    if (!(await queryRunner.hasTable("execution_logs"))) {
+      await queryRunner.query(`
+        CREATE TABLE "execution_logs" (
+          "id" varchar NOT NULL,
+          "task_id" varchar NOT NULL,
+          "agent_id" varchar,
+          "status" varchar(20) NOT NULL,
+          "message" text NOT NULL,
+          "metadata" jsonb,
+          "created_at" timestamp NOT NULL DEFAULT now(),
+          CONSTRAINT "PK_execution_logs_id" PRIMARY KEY ("id")
+        )
+      `);
+    }
 
     await queryRunner.query(`
-      CREATE TABLE "execution_logs" (
-        "id" varchar NOT NULL,
-        "task_id" varchar NOT NULL,
-        "agent_id" varchar,
-        "status" varchar(20) NOT NULL,
-        "message" text NOT NULL,
-        "metadata" jsonb,
-        "created_at" timestamp NOT NULL DEFAULT now(),
-        CONSTRAINT "PK_execution_logs_id" PRIMARY KEY ("id")
-      )
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'FK_execution_logs_task_id'
+        ) THEN
+          ALTER TABLE "execution_logs"
+          ADD CONSTRAINT "FK_execution_logs_task_id"
+          FOREIGN KEY ("task_id") REFERENCES "tasks"("id") ON DELETE CASCADE;
+        END IF;
+      END
+      $$;
     `);
-    await queryRunner.query(
-      `ALTER TABLE "execution_logs" ADD CONSTRAINT "FK_execution_logs_task_id" FOREIGN KEY ("task_id") REFERENCES "tasks"("id") ON DELETE CASCADE`
-    );
   }
 
   async down(queryRunner: QueryRunner): Promise<void> {

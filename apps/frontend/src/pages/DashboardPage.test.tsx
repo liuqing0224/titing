@@ -33,6 +33,7 @@ describe("DashboardPage", () => {
         agents={[]}
         tasks={[]}
         meegleSyncSettings={{ enabled: true, intervalMinutes: 5 }}
+        meegleLoginState={null}
         refreshAll={vi.fn(async () => undefined)}
         onSaveMeegleSyncSettings={saveSettings}
         onOpenTask={vi.fn()}
@@ -57,6 +58,7 @@ describe("DashboardPage", () => {
         agents={[]}
         tasks={[]}
         meegleSyncSettings={{ enabled: true, intervalMinutes: 5 }}
+        meegleLoginState={null}
         refreshAll={vi.fn(async () => undefined)}
         onSaveMeegleSyncSettings={saveSettings}
         onOpenTask={vi.fn()}

@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Put } from "@nestjs/common";
 import { UpdateMeegleSyncSettingsDto } from "../settings/dto/update-meegle-sync-settings.dto";
-import { MeegleSyncSettings, SettingsService } from "../settings/settings.service";
+import { MeegleLoginState, MeegleSyncSettings, SettingsService } from "../settings/settings.service";
 import { MeegleSyncSchedulerService } from "./meegle-sync-scheduler.service";
 
 @Controller("settings/meegle-sync")
@@ -13,6 +13,11 @@ export class MeegleSyncSettingsController {
   @Get()
   getSettings(): Promise<MeegleSyncSettings> {
     return this.settingsService.getMeegleSyncSettings();
+  }
+
+  @Get("login-state")
+  getLoginState(): Promise<MeegleLoginState> {
+    return this.settingsService.getMeegleLoginState();
   }
 
   @Put()

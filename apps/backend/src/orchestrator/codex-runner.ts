@@ -6,6 +6,7 @@ import { Injectable, Logger, Optional } from "@nestjs/common";
 import { Inject } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Agent } from "../agents/agent.entity";
+import { ExecutionLogService } from "../execution-logs/execution-log.service";
 import { AgentRuntimePlugin } from "../plugins/agent-runtime.plugin";
 import {
   ExecutionContext,
@@ -72,7 +73,9 @@ export class CodexRunner implements ExecutionEnginePlugin {
     private readonly processRunner: ProcessRunner = new ExecFileProcessRunner(),
     @Optional()
     @Inject(AGENT_RUNTIME_PLUGIN)
-    private readonly runtime?: AgentRuntimePlugin
+    private readonly runtime?: AgentRuntimePlugin,
+    @Optional()
+    private readonly executionLogService?: ExecutionLogService
   ) {}
 
   getExecutionContext(task: Task): CodexExecutionContext {
@@ -198,6 +201,14 @@ export class CodexRunner implements ExecutionEnginePlugin {
       for (const node of workflowNodes) {
         const loopCount = node.loopEnabled ? node.maxLoops : 1;
         for (let loopIndex = 1; loopIndex <= loopCount; loopIndex += 1) {
+          await this.appendWorkflowLog(task.id, agent.id, "running", {
+            message: `Executing workflow node ${node.name} iteration ${loopIndex}/${loopCount}`,
+            metadata: {
+              node: node.name,
+              iteration: loopIndex,
+              loopCount
+            }
+          });
           this.logger.log(
             `Task ${task.id}: executing node ${node.name} iteration ${loopIndex}/${loopCount}`
           );
@@ -216,6 +227,16 @@ export class CodexRunner implements ExecutionEnginePlugin {
           const labelPrefix = loopCount > 1 ? `${node.name} iteration ${loopIndex}/${loopCount}` : `${node.name}`;
           aggregatedStdout = this.mergeOutput(aggregatedStdout, `${labelPrefix} stdout`, executeResult.stdout);
           aggregatedStderr = this.mergeOutput(aggregatedStderr, `${labelPrefix} stderr`, executeResult.stderr);
+          await this.appendWorkflowLog(task.id, agent.id, "running", {
+            message: `Completed workflow node ${node.name} iteration ${loopIndex}/${loopCount}`,
+            metadata: {
+              node: node.name,
+              iteration: loopIndex,
+              loopCount,
+              stdoutLength: executeResult.stdout.length,
+              stderrLength: executeResult.stderr.length
+            }
+          });
           this.logger.log(
             `Task ${task.id}: node ${node.name} iteration ${loopIndex}/${loopCount} completed (stdout=${executeResult.stdout.length}, stderr=${executeResult.stderr.length})`
           );
@@ -254,6 +275,13 @@ export class CodexRunner implements ExecutionEnginePlugin {
         workflowPromptsPath: executionContext.workflowPromptsPath
       };
     } catch (error) {
+      await this.appendWorkflowLog(task.id, agent.id, "failed", {
+        message: "Workflow execution failed",
+        metadata: {
+          stage: "execute",
+          error: error instanceof Error ? error.message : String(error)
+        }
+      });
       this.logger.error(
         `Task ${task.id}: workflow execution failed at stage execute: ${error instanceof Error ? error.message : String(error)}`
       );
@@ -401,6 +429,28 @@ export class CodexRunner implements ExecutionEnginePlugin {
       agentsMdPath: executionContext.agentsMdPath,
       workflowPromptsPath: executionContext.workflowPromptsPath
     };
+  }
+
+  private async appendWorkflowLog(
+    taskId: string,
+    agentId: string,
+    status: string,
+    input: {
+      message: string;
+      metadata?: Record<string, unknown>;
+    }
+  ): Promise<void> {
+    if (!this.executionLogService) {
+      return;
+    }
+
+    await this.executionLogService.append({
+      taskId,
+      agentId,
+      status,
+      message: input.message,
+      metadata: input.metadata
+    });
   }
 
   private buildWorkflowNodes(task: Task, executionContext: CodexExecutionContext): WorkflowNode[] {

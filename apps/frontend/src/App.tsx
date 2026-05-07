@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { listAgents } from "./api/agents";
 import { getDashboardStats } from "./api/dashboard";
 import { connectEvents } from "./api/events";
-import { getMeegleSyncSettings, updateMeegleSyncSettings } from "./api/settings";
+import { getMeegleLoginState, getMeegleSyncSettings, updateMeegleSyncSettings } from "./api/settings";
 import { getTask, listTasks } from "./api/tasks";
-import { Agent, DashboardStats, MeegleSyncSettings, Task } from "./api/types";
+import { Agent, DashboardStats, MeegleLoginState, MeegleSyncSettings, Task } from "./api/types";
 import { AgentsPage } from "./pages/AgentsPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { TaskDetailPage } from "./pages/TaskDetailPage";
@@ -25,6 +25,7 @@ export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [meegleSyncSettings, setMeegleSyncSettings] = useState<MeegleSyncSettings | null>(null);
+  const [meegleLoginState, setMeegleLoginState] = useState<MeegleLoginState | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(true);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isTaskLoading, setIsTaskLoading] = useState(false);
@@ -37,11 +38,15 @@ export default function App() {
         listTasks(),
         listAgents()
       ]);
-      const nextMeegleSyncSettings = await getMeegleSyncSettings();
+      const [nextMeegleSyncSettings, nextMeegleLoginState] = await Promise.all([
+        getMeegleSyncSettings(),
+        getMeegleLoginState()
+      ]);
       setStats(nextStats);
       setTasks(nextTasks);
       setAgents(nextAgents);
       setMeegleSyncSettings(nextMeegleSyncSettings);
+      setMeegleLoginState(nextMeegleLoginState);
       if (route.taskId) {
         const nextSelectedTask = nextTasks.find((task) => task.id === route.taskId) ?? null;
         setSelectedTask(nextSelectedTask);
@@ -58,8 +63,15 @@ export default function App() {
         void refreshAll();
       },
       onMeegleLoginRequired: (event) => {
-        window.open(event.verificationUri, "_blank", "noopener,noreferrer");
-        window.alert(`已在宿主机浏览器打开 Meegle 登录页面。验证码：${event.userCode}`);
+        setMeegleLoginState({
+          browserPending: true,
+          verificationUri: event.verificationUri,
+          userCode: event.userCode
+        });
+        const opened = window.open(event.verificationUri, "_blank", "noopener,noreferrer");
+        if (!opened) {
+          window.alert(`Meegle 登录链接已准备好，但浏览器可能拦截了自动打开。验证码：${event.userCode}`);
+        }
       }
     });
   }, []);
@@ -207,6 +219,7 @@ export default function App() {
               tasks={tasks}
               agents={agents}
               meegleSyncSettings={meegleSyncSettings}
+              meegleLoginState={meegleLoginState}
               refreshAll={refreshAll}
               onSaveMeegleSyncSettings={saveMeegleSyncSettings}
               onOpenTask={openTaskDetail}

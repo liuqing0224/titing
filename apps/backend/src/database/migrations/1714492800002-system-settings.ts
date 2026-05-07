@@ -4,6 +4,10 @@ export class SystemSettings1714492800002 implements MigrationInterface {
   name = "SystemSettings1714492800002";
 
   async up(queryRunner: QueryRunner): Promise<void> {
+    if (await queryRunner.hasTable("system_settings")) {
+      return;
+    }
+
     await queryRunner.query(`
       CREATE TABLE "system_settings" (
         "key" varchar(100) NOT NULL,

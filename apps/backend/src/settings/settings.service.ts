@@ -11,6 +11,8 @@ export type MeegleSyncSettings = {
 
 export type MeegleLoginState = {
   browserPending: boolean;
+  verificationUri: string | null;
+  userCode: string | null;
 };
 
 const MEEGLE_SYNC_SETTINGS_KEY = "meegle_sync_settings";
@@ -49,13 +51,17 @@ export class SettingsService {
   async getMeegleLoginState(): Promise<MeegleLoginState> {
     const stored = await this.settingsRepository.findOne({ where: { key: MEEGLE_LOGIN_STATE_KEY } });
     return {
-      browserPending: this.readBoolean(stored?.value.browserPending, false)
+      browserPending: this.readBoolean(stored?.value.browserPending, false),
+      verificationUri: this.readString(stored?.value.verificationUri),
+      userCode: this.readString(stored?.value.userCode)
     };
   }
 
   async setMeegleLoginState(input: MeegleLoginState): Promise<MeegleLoginState> {
     const normalized = {
-      browserPending: Boolean(input.browserPending)
+      browserPending: Boolean(input.browserPending),
+      verificationUri: input.verificationUri?.trim() || null,
+      userCode: input.userCode?.trim() || null
     };
     await this.saveSetting(MEEGLE_LOGIN_STATE_KEY, normalized);
     return normalized;
@@ -91,5 +97,9 @@ export class SettingsService {
       return fallback;
     }
     return Math.floor(numeric);
+  }
+
+  private readString(value: unknown): string | null {
+    return typeof value === "string" && value.trim().length > 0 ? value : null;
   }
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { syncMeegle } from "../api/adapter";
-import { Agent, DashboardStats, MeegleSyncSettings, Task } from "../api/types";
+import { Agent, DashboardStats, MeegleLoginState, MeegleSyncSettings, Task } from "../api/types";
 import { AgentCard } from "../components/AgentCard";
 import { StatsCards } from "../components/StatsCards";
 import { formatShanghaiTime } from "../utils/time";
@@ -10,6 +10,7 @@ type DashboardPageProps = {
   agents: Agent[];
   tasks: Task[];
   meegleSyncSettings: MeegleSyncSettings | null;
+  meegleLoginState: MeegleLoginState | null;
   refreshAll: () => Promise<void>;
   onSaveMeegleSyncSettings: (input: MeegleSyncSettings) => Promise<void>;
   onOpenTask: (taskId: string) => void;
@@ -20,6 +21,7 @@ export function DashboardPage({
   agents,
   tasks,
   meegleSyncSettings,
+  meegleLoginState,
   refreshAll,
   onSaveMeegleSyncSettings,
   onOpenTask
@@ -76,6 +78,32 @@ export function DashboardPage({
         </div>
       </section>
 
+      {meegleLoginState?.browserPending && meegleLoginState.verificationUri ? (
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">LOGIN REQUIRED</p>
+              <h3>Meegle 需要重新登录</h3>
+            </div>
+            <span className="terminal-chip">browser pending</span>
+          </div>
+          <div className="settings-actions">
+            <p className="muted-copy">
+              自动打开浏览器可能被拦截，或事件发生时前端尚未连接。请直接点击下面的链接完成登录。
+              {meegleLoginState.userCode ? ` 验证码：${meegleLoginState.userCode}` : ""}
+            </p>
+            <a
+              className="primary-button"
+              href={meegleLoginState.verificationUri}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              打开 Meegle 登录页
+            </a>
+          </div>
+        </section>
+      ) : null}
+
       <StatsCards stats={stats} />
 
       <div className="layout-split">
@@ -105,7 +133,7 @@ export function DashboardPage({
                 />
               </label>
               <div className="settings-actions">
-                <p className="muted-copy">未登录时由后端宿主机直接打开浏览器，并在授权完成后继续同步。</p>
+                <p className="muted-copy">未登录时前端会尝试打开登录页；如果被拦截，控制台会保留可手动点击的登录入口。</p>
                 <button className="ghost-button" onClick={() => void handleSaveSettings()} type="button">
                   保存自动同步配置
                 </button>

@@ -66,12 +66,16 @@ export class AdapterService {
     const login = await this.taskSource.beginLogin();
     const verificationUri = login.verificationUriComplete || login.verificationUri;
     const openedViaSse = Boolean(this.eventsService?.hasSubscribers());
+    await this.settingsService.setMeegleLoginState({
+      browserPending: true,
+      verificationUri,
+      userCode: login.userCode
+    });
     if (openedViaSse) {
       this.eventsService?.publishMeegleLoginRequired(verificationUri, login.userCode);
     } else {
       await this.browserLauncher.open(verificationUri);
     }
-    await this.settingsService.setMeegleLoginState({ browserPending: true });
     return login;
   }
 
@@ -235,7 +239,11 @@ export class AdapterService {
   private async ensureMeegleAuthenticated(): Promise<void> {
     const authStatus = await this.taskSource.getAuthStatus();
     if (authStatus.authenticated) {
-      await this.settingsService.setMeegleLoginState({ browserPending: false });
+      await this.settingsService.setMeegleLoginState({
+        browserPending: false,
+        verificationUri: null,
+        userCode: null
+      });
       return;
     }
 
@@ -253,7 +261,11 @@ export class AdapterService {
   }
 
   private async runLoginRecovery(): Promise<void> {
-    await this.settingsService.setMeegleLoginState({ browserPending: false });
+    await this.settingsService.setMeegleLoginState({
+      browserPending: false,
+      verificationUri: null,
+      userCode: null
+    });
     const login = await this.beginLogin();
     this.logger.warn(`Meegle login required; opened browser for deviceCode=${login.deviceCode}`);
     const deadline = Date.now() + login.expiresIn * 1000;
@@ -270,11 +282,19 @@ export class AdapterService {
         continue;
       }
 
-      await this.settingsService.setMeegleLoginState({ browserPending: false });
+      await this.settingsService.setMeegleLoginState({
+        browserPending: false,
+        verificationUri: null,
+        userCode: null
+      });
       return;
     }
 
-    await this.settingsService.setMeegleLoginState({ browserPending: false });
+    await this.settingsService.setMeegleLoginState({
+      browserPending: false,
+      verificationUri: null,
+      userCode: null
+    });
     throw new UnauthorizedException("Meegle login timed out");
   }
 

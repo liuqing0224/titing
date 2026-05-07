@@ -52,3 +52,9 @@ export type MeegleSyncSettings = {
   enabled: boolean;
   intervalMinutes: number;
 };
+
+export type MeegleLoginState = {
+  browserPending: boolean;
+  verificationUri: string | null;
+  userCode: string | null;
+};
