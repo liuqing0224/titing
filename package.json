@@ -2,13 +2,13 @@
   "name": "autodev-agent",
   "private": true,
   "workspaces": [
-    "apps/backend",
-    "apps/frontend"
+    "apps/server",
+    "apps/web"
   ],
   "scripts": {
-    "build": "npm run build -w apps/backend && npm run build -w apps/frontend",
-    "test": "npm run test -w apps/backend && npm run test -w apps/frontend",
-    "dev:backend": "npm run start:dev -w apps/backend",
-    "dev:frontend": "npm run dev -w apps/frontend"
+    "build": "npm run build -w apps/server && npm run build -w apps/web",
+    "test": "sh -c 'npm run test -w apps/server -- \"$@\" && npm run test -w apps/web' --",
+    "dev:backend": "npm run start:dev -w apps/server",
+    "dev:frontend": "npm run dev -w apps/web"
   }
 }

@@ -1,0 +1,26 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "../..",
+    "baseUrl": "./",
+    "incremental": true,
+    "strictPropertyInitialization": false,
+    "types": ["node", "jest"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "../../packages/core/src/**/*.ts",
+    "../../plugins/*/src/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "test",
+    "**/*.spec.ts",
+    "../../packages/core/src/**/*.spec.ts",
+    "../../plugins/*/src/**/*.spec.ts",
+    "../../plugins/**/web/**/*.ts",
+    "../../plugins/**/web/**/*.tsx"
+  ]
+}
