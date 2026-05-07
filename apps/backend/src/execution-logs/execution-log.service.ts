@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
+import { EventsService } from "../events/events.service";
 import { ExecutionLog } from "./execution-log.entity";
 
 export type AppendExecutionLogInput = {
@@ -16,7 +17,9 @@ export type AppendExecutionLogInput = {
 export class ExecutionLogService {
   constructor(
     @InjectRepository(ExecutionLog)
-    private readonly executionLogRepository: Repository<ExecutionLog>
+    private readonly executionLogRepository: Repository<ExecutionLog>,
+    @Optional()
+    private readonly eventsService?: EventsService
   ) {}
 
   async append(input: AppendExecutionLogInput): Promise<ExecutionLog> {
@@ -29,7 +32,9 @@ export class ExecutionLogService {
       metadata: input.metadata ?? null
     });
 
-    return this.executionLogRepository.save(log);
+    const saved = await this.executionLogRepository.save(log);
+    this.eventsService?.publishExecutionLog(saved.id, saved.taskId, saved.status, saved.agentId);
+    return saved;
   }
 
   async listByTask(taskId: string): Promise<ExecutionLog[]> {

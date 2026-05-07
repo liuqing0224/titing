@@ -14,6 +14,14 @@ export type TaskLifecycleEvent = {
   timestamp: string;
 };
 
+export type ExecutionLogEvent = {
+  logId: string;
+  taskId: string;
+  status: string;
+  agentId?: string | null;
+  timestamp: string;
+};
+
 export type MeegleLoginRequiredEvent = {
   verificationUri: string;
   userCode: string;
@@ -25,6 +33,7 @@ export class EventsService {
   private readonly events$ = new Subject<MessageEvent>();
   private readonly agentStatusEvents: AgentStatusEvent[] = [];
   private readonly taskLifecycleEvents: TaskLifecycleEvent[] = [];
+  private readonly executionLogEvents: ExecutionLogEvent[] = [];
   private readonly meegleLoginRequiredEvents: MeegleLoginRequiredEvent[] = [];
   private subscriberCount = 0;
 
@@ -66,6 +75,21 @@ export class EventsService {
     });
   }
 
+  publishExecutionLog(logId: string, taskId: string, status: string, agentId?: string | null): void {
+    const event = {
+      logId,
+      taskId,
+      status,
+      agentId,
+      timestamp: new Date().toISOString()
+    };
+    this.executionLogEvents.push(event);
+    this.events$.next({
+      type: "execution.log",
+      data: event
+    });
+  }
+
   publishMeegleLoginRequired(verificationUri: string, userCode: string): void {
     const event = {
       verificationUri,
@@ -85,6 +109,10 @@ export class EventsService {
 
   getTaskLifecycleEvents(): TaskLifecycleEvent[] {
     return this.taskLifecycleEvents;
+  }
+
+  getExecutionLogEvents(): ExecutionLogEvent[] {
+    return this.executionLogEvents;
   }
 
   getMeegleLoginRequiredEvents(): MeegleLoginRequiredEvent[] {

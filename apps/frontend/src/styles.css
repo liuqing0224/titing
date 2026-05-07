@@ -653,6 +653,30 @@ textarea {
   background: #050907;
   color: var(--accent-strong);
   font-family: var(--mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.log-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px 16px;
+  margin: 12px 0;
+}
+
+.log-meta-grid dt {
+  margin-bottom: 4px;
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.log-meta-grid dd {
+  margin: 0;
+  font-family: var(--mono);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 @media (max-width: 1080px) {

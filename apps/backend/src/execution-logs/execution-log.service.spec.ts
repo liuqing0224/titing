@@ -17,7 +17,10 @@ describe("ExecutionLogService", () => {
 
   it("appends logs with complete stdout and stderr metadata", async () => {
     const repository = createRepository();
-    const service = new ExecutionLogService(repository as never);
+    const eventsService = {
+      publishExecutionLog: jest.fn()
+    };
+    const service = new ExecutionLogService(repository as never, eventsService as never);
 
     const log = await service.append({
       taskId: "auto-1",
@@ -38,6 +41,12 @@ describe("ExecutionLogService", () => {
       exitCode: 1
     });
     expect(repository.save).toHaveBeenCalledTimes(1);
+    expect(eventsService.publishExecutionLog).toHaveBeenCalledWith(
+      log.id,
+      "auto-1",
+      "failed",
+      "agent-1"
+    );
   });
 
   it("lists logs by task in createdAt ascending order", async () => {

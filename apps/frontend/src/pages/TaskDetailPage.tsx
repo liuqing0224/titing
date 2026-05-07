@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { connectEvents } from "../api/events";
 import { listTaskLogs, retryTask, updateTaskExecutionFields } from "../api/tasks";
 import { ExecutionLog, Task } from "../api/types";
+import { ExecutionLogTimeline } from "../components/ExecutionLogTimeline";
 import { ExecutionLogModal } from "../components/ExecutionLogModal";
 import { TaskCard } from "../components/TaskCard";
 import { formatShanghaiTime } from "../utils/time";
@@ -13,7 +15,51 @@ type TaskDetailPageProps = {
 };
 
 export function TaskDetailPage({ task, onBack, onOpenTask, refreshAll }: TaskDetailPageProps) {
+  const [detailLogs, setDetailLogs] = useState<ExecutionLog[] | null>(null);
   const [logs, setLogs] = useState<ExecutionLog[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDetailLogs(null);
+
+    void listTaskLogs(task.id).then((nextLogs) => {
+      if (!cancelled) {
+        setDetailLogs(nextLogs);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [task.id]);
+
+  useEffect(() => {
+    let refreshing = false;
+
+    const reloadLogs = () => {
+      if (refreshing) {
+        return;
+      }
+
+      refreshing = true;
+      void listTaskLogs(task.id)
+        .then((nextLogs) => {
+          setDetailLogs(nextLogs);
+        })
+        .finally(() => {
+          refreshing = false;
+        });
+    };
+
+    return connectEvents({
+      refreshAll: () => undefined,
+      onExecutionLog: (event) => {
+        if (event.taskId === task.id) {
+          reloadLogs();
+        }
+      }
+    });
+  }, [task.id]);
 
   return (
     <div className="page-stack">
@@ -45,10 +91,12 @@ export function TaskDetailPage({ task, onBack, onOpenTask, refreshAll }: TaskDet
           onRetry={async (taskId) => {
             await retryTask(taskId);
             await refreshAll();
+            setDetailLogs(await listTaskLogs(taskId));
           }}
           onSaveExecutionFields={async (taskId, input) => {
             await updateTaskExecutionFields(taskId, input);
             await refreshAll();
+            setDetailLogs(await listTaskLogs(taskId));
           }}
         />
       </section>
@@ -91,6 +139,20 @@ export function TaskDetailPage({ task, onBack, onOpenTask, refreshAll }: TaskDet
           <div className="text-panel">{task.instruction ?? "暂无执行指令"}</div>
         </section>
       </div>
+
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">EXECUTION LOGS</p>
+            <h3>执行历史</h3>
+          </div>
+        </div>
+        {detailLogs ? (
+          <ExecutionLogTimeline logs={detailLogs} emptyText="当前任务还没有执行日志" />
+        ) : (
+          <p className="muted-copy">正在加载执行日志...</p>
+        )}
+      </section>
       {logs ? <ExecutionLogModal logs={logs} onClose={() => setLogs(null)} /> : null}
     </div>
   );

@@ -69,4 +69,32 @@ describe("connectEvents", () => {
     });
     disconnect();
   });
+
+  it("forwards execution log events to the provided handler", () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const onExecutionLog = vi.fn();
+
+    const disconnect = connectEvents({ refreshAll: vi.fn(), onExecutionLog });
+    const source = FakeEventSource.instances.at(-1)!;
+
+    source.emit(
+      "execution.log",
+      JSON.stringify({
+        logId: "log-1",
+        taskId: "auto-1",
+        status: "running",
+        agentId: "agent-1",
+        timestamp: "2026-05-06T12:00:00.000Z"
+      })
+    );
+
+    expect(onExecutionLog).toHaveBeenCalledWith({
+      logId: "log-1",
+      taskId: "auto-1",
+      status: "running",
+      agentId: "agent-1",
+      timestamp: "2026-05-06T12:00:00.000Z"
+    });
+    disconnect();
+  });
 });

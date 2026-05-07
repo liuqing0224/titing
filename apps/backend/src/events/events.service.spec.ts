@@ -53,4 +53,23 @@ describe("EventsService", () => {
     });
     subscription.unsubscribe();
   });
+
+  it("streams execution log events in SSE message format", () => {
+    const service = new EventsService();
+    const messages: MessageEvent[] = [];
+    const subscription = service.stream().subscribe((message: MessageEvent) => messages.push(message));
+
+    service.publishExecutionLog("log-1", "auto-1", "running", "agent-1");
+
+    expect(messages[0]).toEqual({
+      type: "execution.log",
+      data: expect.objectContaining({
+        logId: "log-1",
+        taskId: "auto-1",
+        status: "running",
+        agentId: "agent-1"
+      })
+    });
+    subscription.unsubscribe();
+  });
 });

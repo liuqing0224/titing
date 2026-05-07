@@ -32,7 +32,9 @@ describe("ExecutionLogModal", () => {
     expect(screen.getByText("Codex exited normally")).toBeInTheDocument();
     expect(screen.getByText(/feature\/demo/)).toBeInTheDocument();
     expect(screen.getByText(/\/workspace\/team\/project/)).toBeInTheDocument();
-    expect(screen.getByText(/"exitCode": 0/)).toBeInTheDocument();
-    expect(screen.getByText(/"normalExit": true/)).toBeInTheDocument();
+    expect(screen.getByText("exitCode")).toBeInTheDocument();
+    expect(screen.getByText("0")).toBeInTheDocument();
+    expect(screen.getByText("normalExit")).toBeInTheDocument();
+    expect(screen.getByText("true")).toBeInTheDocument();
   });
 });
