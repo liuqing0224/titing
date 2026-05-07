@@ -1,4 +1,4 @@
-import { DynamicModule, Global, Module, Provider } from "@nestjs/common";
+import { DynamicModule, Global, Logger, Module, Provider } from "@nestjs/common";
 import { ServerPluginManifest } from "./plugin.manifest";
 import {
   AGENT_RUNTIME_PLUGIN,
@@ -18,6 +18,7 @@ import { PluginRegistryService } from "./plugin-registry.service";
 @Module({})
 export class PluginHostModule {
   static register(manifests: ServerPluginManifest[] = []): DynamicModule {
+    this.logExecutionEngineResolution(manifests);
     const imports = manifests.flatMap((manifest) => (manifest.module ? [manifest.module] : []));
     const providers: Provider[] = [
       {
@@ -161,5 +162,31 @@ export class PluginHostModule {
       token: selected.token,
       priority: selected.priority
     };
+  }
+
+  private static logExecutionEngineResolution(manifests: ServerPluginManifest[]): void {
+    const candidates = manifests
+      .filter((manifest) => manifest.provides?.executionEngine !== undefined)
+      .map((manifest) => ({
+        id: manifest.id,
+        priority: manifest.priority ?? 0,
+        kind: manifest.kind
+      }))
+      .sort((left, right) => right.priority - left.priority);
+
+    if (candidates.length === 0) {
+      return;
+    }
+
+    const logger = new Logger(PluginHostModule.name);
+    const [winner, ...rest] = candidates;
+    const runnerUpSummary =
+      rest.length > 0 ? rest.map((entry) => `${entry.id} (priority ${entry.priority})`).join(", ") : "none";
+    logger.log(
+      `Execution engine plugins (by priority): ${candidates.map((c) => `${c.id}=${c.priority}`).join(", ")}`
+    );
+    logger.log(
+      `Active execution engine manifest: ${winner.id} (priority ${winner.priority}, kind ${winner.kind}); not selected: ${runnerUpSummary}`
+    );
   }
 }

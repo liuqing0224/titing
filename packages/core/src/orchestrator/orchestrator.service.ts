@@ -104,13 +104,17 @@ export class OrchestratorService implements OnApplicationBootstrap {
     agent: NonNullable<Awaited<ReturnType<AgentService["findIdleAgent"]>>>
   ): Promise<void> {
     this.logger.log(`Task ${task.id} claimed by ${agent.id}, starting orchestration`);
+    const engineTelemetry = this.getExecutionEngineTelemetry();
+    this.logger.log(
+      `Task ${task.id}: executionEngine=${engineTelemetry.executionEngine} (${this.getExecutionEngineDisplayName()}) runnerClass=${engineTelemetry.executionEngineRunnerClass}`
+    );
     const executionContext = this.executionEngine.getExecutionContext(task);
     await this.executionLogService.append({
       taskId: task.id,
       agentId: agent.id,
       status: "running",
-      message: "Preparing project workspace, validating WORKFLOW_PROMPTS.md, and executing Codex",
-      metadata: this.buildExecutionMetadata(executionContext)
+      message: `Preparing project workspace, validating WORKFLOW_PROMPTS.md, and executing ${this.getExecutionEngineDisplayName()}`,
+      metadata: this.buildExecutionMetadata(executionContext, engineTelemetry)
     });
     await this.agentService.refreshHeartbeat(agent.id);
     const stopHeartbeatLoop = this.startHeartbeatLoop(agent.id);
@@ -123,9 +127,9 @@ export class OrchestratorService implements OnApplicationBootstrap {
     }
 
     await this.agentService.refreshHeartbeat(agent.id);
-    const metadata = this.buildExecutionMetadata(result);
+    const metadata = this.buildExecutionMetadata(result, this.getExecutionEngineTelemetry());
     this.logger.log(
-      `Task ${task.id} runner returned exitCode=${result.exitCode}, stage=${result.stage}, timedOut=${result.timedOut}`
+      `Task ${task.id} runner returned exitCode=${result.exitCode}, stage=${result.stage}, timedOut=${result.timedOut}, executionEngine=${this.executionEngine.engine}`
     );
 
     try {
@@ -135,7 +139,7 @@ export class OrchestratorService implements OnApplicationBootstrap {
           taskId: task.id,
           agentId: agent.id,
           status: "running",
-          message: "WORKFLOW_PROMPTS.md workflow executed and Codex exited normally",
+          message: `WORKFLOW_PROMPTS.md workflow executed and ${this.getExecutionEngineDisplayName()} exited normally`,
           metadata
         });
         await this.taskService.markDoneInternal(task.id, metadata);
@@ -193,9 +197,11 @@ export class OrchestratorService implements OnApplicationBootstrap {
   }
 
   private buildExecutionMetadata(
-    execution: ReturnType<ExecutionEnginePlugin["getExecutionContext"]> | ExecutionRunResult
+    execution: ReturnType<ExecutionEnginePlugin["getExecutionContext"]> | ExecutionRunResult,
+    engineTelemetry?: { executionEngine: string; executionEngineRunnerClass: string }
   ): Record<string, unknown> {
     return {
+      ...(engineTelemetry ?? {}),
       repo: execution.repo,
       branch: execution.branch,
       repoRoot: execution.repoRoot,
@@ -231,8 +237,29 @@ export class OrchestratorService implements OnApplicationBootstrap {
       return "Project WORKFLOW_PROMPTS.md is missing or invalid";
     }
     if (result.timedOut) {
-      return "Codex timed out";
+      return `${this.getExecutionEngineDisplayName()} timed out`;
     }
-    return "Codex exited abnormally while following WORKFLOW_PROMPTS.md workflow";
+    return `${this.getExecutionEngineDisplayName()} exited abnormally while following WORKFLOW_PROMPTS.md workflow`;
+  }
+
+  private getExecutionEngineDisplayName(): string {
+    const id = this.executionEngine.engine;
+    if (id === "codex") {
+      return "Codex";
+    }
+    if (id === "cursor") {
+      return "Cursor CLI";
+    }
+    return id;
+  }
+
+  private getExecutionEngineTelemetry(): {
+    executionEngine: string;
+    executionEngineRunnerClass: string;
+  } {
+    return {
+      executionEngine: this.executionEngine.engine,
+      executionEngineRunnerClass: this.executionEngine.constructor?.name ?? "unknown"
+    };
   }
 }

@@ -6,6 +6,7 @@ import { NestFactory } from "@nestjs/core";
 import { createAppModule } from "./app.module";
 import { ApiResponseInterceptor } from "./api-response.interceptor";
 import { HttpExceptionFilter } from "./http-exception.filter";
+import { FileTeeConsoleLogger } from "./file-tee-console-logger";
 import { discoverServerPluginManifests } from "./plugin-loader";
 
 function loadEnvFile(filePath: string): void {
@@ -41,7 +42,9 @@ for (const candidate of [
 }
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(createAppModule(discoverServerPluginManifests()));
+  const app = await NestFactory.create(createAppModule(discoverServerPluginManifests()), {
+    logger: new FileTeeConsoleLogger()
+  });
   app.setGlobalPrefix("api");
   app.enableCors({ origin: "*" });
   app.useGlobalInterceptors(new ApiResponseInterceptor());

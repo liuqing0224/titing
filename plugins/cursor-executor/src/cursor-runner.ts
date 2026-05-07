@@ -16,11 +16,11 @@ import { AGENT_RUNTIME_PLUGIN } from "../../../packages/core/src/plugins/plugin.
 import { resolveExecutionBranch } from "../../../packages/core/src/tasks/task-branch";
 import { Task } from "../../../packages/core/src/tasks/task.entity";
 
-export type CodexRunStage = ExecutionRunStage;
+export type CursorRunStage = ExecutionRunStage;
 
-export type CodexExecutionContext = ExecutionContext & { isAbsolutePath: boolean };
+export type CursorExecutionContext = ExecutionContext & { isAbsolutePath: boolean };
 
-export type CodexRunResult = ExecutionRunResult;
+export type CursorRunResult = ExecutionRunResult;
 
 type WorkflowNode = {
   name: string;
@@ -35,11 +35,11 @@ type WorkflowCompletionStatus = {
 };
 
 @Injectable()
-export class CodexRunner implements ExecutionEnginePlugin {
-  readonly engine = "codex";
+export class CursorRunner implements ExecutionEnginePlugin {
+  readonly engine = "cursor";
   private readonly maxBuffer = 20 * 1024 * 1024;
   private readonly defaultWorkflowHeading = "## Agents 默认执行流程";
-  private readonly logger = new Logger(CodexRunner.name);
+  private readonly logger = new Logger(CursorRunner.name);
 
   constructor(
     private readonly configService: ConfigService,
@@ -50,8 +50,16 @@ export class CodexRunner implements ExecutionEnginePlugin {
     private readonly executionLogService?: ExecutionLogService
   ) {}
 
-  getExecutionContext(task: Task): CodexExecutionContext {
-    const workspaceRoot = this.configService.get<string>("CODEX_WORKDIR", process.cwd());
+  private resolveWorkspaceRoot(): string {
+    const cursorRoot = this.configService.get<string | undefined>("CURSOR_WORKDIR", undefined);
+    if (cursorRoot !== undefined && cursorRoot !== "") {
+      return cursorRoot;
+    }
+    return this.configService.get<string>("CODEX_WORKDIR", process.cwd());
+  }
+
+  getExecutionContext(task: Task): CursorExecutionContext {
+    const workspaceRoot = this.resolveWorkspaceRoot();
     const repoTarget = this.resolveRepoTarget(task, workspaceRoot);
 
     return {
@@ -66,15 +74,15 @@ export class CodexRunner implements ExecutionEnginePlugin {
     };
   }
 
-  async run(task: Task, agent: Agent): Promise<CodexRunResult> {
-    const cliBin = this.configService.get<string>("CODEX_CLI_BIN", "codex");
-    const timeout = Number(this.configService.get<string>("CODEX_TIMEOUT_MS", "1800000"));
-    const workspaceRoot = this.configService.get<string>("CODEX_WORKDIR", process.cwd());
+  async run(task: Task, agent: Agent): Promise<CursorRunResult> {
+    const cliBin = this.configService.get<string>("CURSOR_CLI_BIN", "agent");
+    const timeout = Number(this.configService.get<string>("CURSOR_TIMEOUT_MS", "1800000"));
+    const workspaceRoot = this.resolveWorkspaceRoot();
     const executionContext = this.getExecutionContext(task);
     this.logger.log(
       `[execution-engine] engine=${this.engine} task=${task.id} agent=${agent.id} cliBin=${cliBin}`
     );
-    this.logCodexExecConfig();
+    this.logCursorAgentConfig();
     this.logger.log(
       `Task ${task.id} starting on agent ${agent.id}: repo=${executionContext.repo}, branch=${executionContext.branch}, worktree=${executionContext.worktreePath}`
     );
@@ -156,7 +164,7 @@ export class CodexRunner implements ExecutionEnginePlugin {
           this.logger.log(
             `Task ${task.id}: executing node ${node.name} iteration ${loopIndex}/${loopCount}`
           );
-          const [command, ...args] = this.buildCodexExecArgs(cliBin, executionContext.worktreePath, node.prompt);
+          const [command, ...args] = this.buildCursorAgentArgs(cliBin, executionContext.worktreePath, node.prompt);
           const executeResult = await this.runRuntimeCommand(
             agent,
             executionContext.worktreePath,
@@ -244,7 +252,7 @@ export class CodexRunner implements ExecutionEnginePlugin {
     }
   }
 
-  runTask(task: Task, agent: Agent): Promise<CodexRunResult> {
+  runTask(task: Task, agent: Agent): Promise<CursorRunResult> {
     return this.run(task, agent);
   }
 
@@ -295,7 +303,7 @@ export class CodexRunner implements ExecutionEnginePlugin {
   private async prepareWorktreeWorkspace(
     task: Task,
     agent: Agent,
-    repoTarget: CodexExecutionContext,
+    repoTarget: CursorExecutionContext,
     workspaceRoot: string,
     timeout: number
   ): Promise<void> {
@@ -368,16 +376,16 @@ export class CodexRunner implements ExecutionEnginePlugin {
   }
 
   private buildFailureResult(
-    stage: CodexRunStage,
+    stage: CursorRunStage,
     error: unknown,
-    executionContext: CodexExecutionContext,
+    executionContext: CursorExecutionContext,
     state: {
       branchCheckedOut: boolean;
       codexStarted: boolean;
       stdout: string;
       stderr: string;
     }
-  ): CodexRunResult {
+  ): CursorRunResult {
     const failure = error as {
       code?: number;
       killed?: boolean;
@@ -395,7 +403,7 @@ export class CodexRunner implements ExecutionEnginePlugin {
       stderr: this.mergeOutput(
         state.stderr,
         `${stage} stderr`,
-        failure.stderr || failure.message || (timedOut ? "Codex command timed out" : "")
+        failure.stderr || failure.message || (timedOut ? "Cursor CLI command timed out" : "")
       ),
       timedOut,
       branchCheckedOut: state.branchCheckedOut,
@@ -456,7 +464,7 @@ export class CodexRunner implements ExecutionEnginePlugin {
     });
   }
 
-  private buildWorkflowNodes(task: Task, executionContext: CodexExecutionContext): WorkflowNode[] {
+  private buildWorkflowNodes(task: Task, executionContext: CursorExecutionContext): WorkflowNode[] {
     const { workflowPromptsContent, resolvedWorkflowPromptsPath } = this.loadWorkflowDefinitions(
       executionContext.worktreePath
     );
@@ -495,7 +503,7 @@ export class CodexRunner implements ExecutionEnginePlugin {
   }
 
   private extractWorkflowPromptsCandidates(worktreePath: string): string[] {
-    const candidates = [];
+    const candidates: string[] = [];
     candidates.push(path.join(worktreePath, "knowledge", "WORKFLOW_PROMPTS.md"));
     candidates.push(path.join(worktreePath, "WORKFLOW_PROMPTS.md"));
     return Array.from(new Set(candidates));
@@ -542,7 +550,7 @@ export class CodexRunner implements ExecutionEnginePlugin {
       .split("\n")
       .map((line) => line.match(/^\s*(?:-\s+|(?:\d+)\.\s+)`([^`]+)`\s*$/)?.[1] ?? null)
       .filter((value): value is string => value !== null)
-      .filter((value) => /^[A-Za-z][A-Za-z0-9]*$/.test(value))
+      .filter((value) => /^[A-Za-z][A-Za-z0-9]*$/.test(value));
   }
 
   private extractNodePromptTemplate(workflowPromptsContent: string, nodeName: string): string {
@@ -589,7 +597,7 @@ export class CodexRunner implements ExecutionEnginePlugin {
 
   private buildWorkflowVariables(
     task: Task,
-    executionContext: CodexExecutionContext
+    executionContext: CursorExecutionContext
   ): Record<string, string> {
     const projectName = path.posix.basename(executionContext.repoRoot);
     return {
@@ -615,7 +623,7 @@ export class CodexRunner implements ExecutionEnginePlugin {
     return workflowNodes.some((node) => node.loopEnabled && node.maxLoops > 1);
   }
 
-  private getWorkflowCompletionStatus(executionContext: CodexExecutionContext): WorkflowCompletionStatus {
+  private getWorkflowCompletionStatus(executionContext: CursorExecutionContext): WorkflowCompletionStatus {
     const taskResultPath = path.join(
       executionContext.worktreePath,
       "docs",
@@ -702,103 +710,62 @@ export class CodexRunner implements ExecutionEnginePlugin {
       .filter((value): value is string => Boolean(value));
   }
 
-  private buildCodexExecArgs(
-    cliBin: string,
-    worktreePath: string,
-    instruction: string
-  ): string[] {
-    const provider = this.configService.get<string | undefined>("CODEX_MODEL_PROVIDER", undefined);
-    const model = this.configService.get<string | undefined>("CODEX_MODEL", undefined);
-    const reasoningEffort = this.configService.get<string | undefined>(
-      "CODEX_MODEL_REASONING_EFFORT",
-      undefined
-    );
-    const args = [
-      cliBin,
-      "exec",
-      ...this.getUserConfigArgs(),
-      "--ignore-rules",
-      "--sandbox",
-      "danger-full-access",
-      "-C",
-      worktreePath,
-      instruction
-    ];
+  private buildCursorAgentArgs(cliBin: string, worktreePath: string, instruction: string): string[] {
+    const outputFormat = this.configService.get<string>("CURSOR_OUTPUT_FORMAT", "text");
+    const model = this.configService.get<string | undefined>("CURSOR_MODEL", undefined);
+    const mode = this.configService.get<string | undefined>("CURSOR_AGENT_MODE", undefined);
+    const sandbox = this.configService.get<string | undefined>("CURSOR_SANDBOX", undefined);
+    const trustWorkspace = this.configService.get<string>("CURSOR_TRUST_WORKSPACE", "true");
+    const forceCommands = this.configService.get<string>("CURSOR_FORCE_COMMANDS", "true");
+    const approveMcps = this.configService.get<string>("CURSOR_APPROVE_MCPS", "false");
+
+    const argv: string[] = [cliBin];
+    const binBase = path.basename(cliBin).toLowerCase();
+    if (binBase === "cursor" || binBase === "cursor.cmd" || binBase === "cursor.exe") {
+      argv.push("agent");
+    }
+
+    argv.push("-p", "--workspace", worktreePath, "--output-format", outputFormat);
+
+    if (trustWorkspace === "true") {
+      argv.push("--trust");
+    }
+    if (forceCommands === "true") {
+      argv.push("--force");
+    }
+    if (approveMcps === "true") {
+      argv.push("--approve-mcps");
+    }
 
     if (model) {
-      args.splice(args.length - 1, 0, "-m", model);
+      argv.push("--model", model);
     }
 
-    if (reasoningEffort) {
-      args.splice(args.length - 1, 0, "-c", `model_reasoning_effort=${this.toTomlString(reasoningEffort)}`);
+    if (mode) {
+      argv.push("--mode", mode);
     }
 
-    if (!provider) {
-      return args;
+    if (sandbox === "enabled" || sandbox === "disabled") {
+      argv.push("--sandbox", sandbox);
     }
 
-    const baseUrl = this.configService.get<string>("CODEX_MODEL_BASE_URL", "https://right.codes/codex/v1");
-    const wireApi = this.configService.get<string>("CODEX_MODEL_WIRE_API", "responses");
-    const requiresOpenAiAuth = this.configService.get<string>("CODEX_MODEL_REQUIRES_OPENAI_AUTH", "true");
-
-    args.splice(
-      args.length - 1,
-      0,
-      "-c",
-      `model_provider=${this.toTomlString(provider)}`,
-      "-c",
-      `model_providers.${provider}.name=${this.toTomlString(provider)}`,
-      "-c",
-      `model_providers.${provider}.base_url=${this.toTomlString(baseUrl)}`,
-      "-c",
-      `model_providers.${provider}.wire_api=${this.toTomlString(wireApi)}`,
-      "-c",
-      `model_providers.${provider}.requires_openai_auth=${requiresOpenAiAuth}`
-    );
-
-    return args;
+    argv.push(instruction);
+    return argv;
   }
 
-  private getUserConfigArgs(): string[] {
-    const rawValue = this.configService.get<string>("CODEX_IGNORE_USER_CONFIG", "false");
-    return rawValue === "true" ? ["--ignore-user-config"] : [];
-  }
-
-  private logCodexExecConfig(): void {
-    const ignoreUserConfig = this.getUserConfigArgs().includes("--ignore-user-config");
-    const provider = this.configService.get<string | undefined>("CODEX_MODEL_PROVIDER", undefined);
-    const model = this.configService.get<string | undefined>("CODEX_MODEL", undefined);
+  private logCursorAgentConfig(): void {
+    const model = this.configService.get<string | undefined>("CURSOR_MODEL", undefined);
+    const outputFormat = this.configService.get<string>("CURSOR_OUTPUT_FORMAT", "text");
+    const mode = this.configService.get<string | undefined>("CURSOR_AGENT_MODE", undefined);
+    const cliBin = this.configService.get<string>("CURSOR_CLI_BIN", "agent");
     this.logger.log(
-      `Codex exec config: ignoreUserConfig=${String(ignoreUserConfig)}, model=${model ?? "default"}, provider=${provider ?? "default"}`
+      `Cursor agent CLI config: bin=${cliBin}, model=${model ?? "default"}, outputFormat=${outputFormat}, mode=${mode ?? "default"}`
     );
-  }
-
-  private toTomlString(value: string): string {
-    return JSON.stringify(value);
-  }
-
-  private isMissingBranchCheckoutError(error: unknown): boolean {
-    const output = this.readCheckoutErrorText(error).toLowerCase();
-    return (
-      output.includes("pathspec") ||
-      output.includes("did not match any file(s) known to git") ||
-      output.includes("not a commit")
-    );
-  }
-
-  private readCheckoutErrorText(error: unknown): string {
-    if (!(error instanceof Error)) {
-      return "";
-    }
-
-    const stderr = "stderr" in error && typeof error.stderr === "string" ? error.stderr : "";
-    const stdout = "stdout" in error && typeof error.stdout === "string" ? error.stdout : "";
-    return [error.message, stderr, stdout].filter(Boolean).join("\n");
   }
 
   private async ensureWorkflowPromptsExists(
     agent: Agent,
-    executionContext: CodexExecutionContext,
+    executionContext: CursorExecutionContext,
     timeout: number
   ): Promise<void> {
     await this.runRuntimeCommand(

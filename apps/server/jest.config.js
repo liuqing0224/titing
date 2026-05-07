@@ -6,6 +6,7 @@ module.exports = {
     "<rootDir>/../../packages/core/src",
     "<rootDir>/../../plugins/meegle/src",
     "<rootDir>/../../plugins/codex-executor/src",
+    "<rootDir>/../../plugins/cursor-executor/src",
     "<rootDir>/../../plugins/local-runtime/src",
     "<rootDir>/../../plugins/ops-console/src"
   ],
