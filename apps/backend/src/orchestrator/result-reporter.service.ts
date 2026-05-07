@@ -1,38 +1,41 @@
-import { Injectable } from "@nestjs/common";
-import { MeegleAdapter } from "../adapter/meegle.adapter";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { TASK_RESULT_REPORTER_PLUGINS } from "../plugins/plugin.tokens";
+import { TaskResultReporterPlugin } from "../plugins/result-reporter.plugin";
 import { Task } from "../tasks/task.entity";
 import { CodexRunResult } from "./codex-runner";
 
 @Injectable()
 export class ResultReporterService {
-  constructor(private readonly meegleAdapter: MeegleAdapter) {}
+  private readonly logger = new Logger(ResultReporterService.name);
+
+  constructor(
+    @Optional()
+    @Inject(TASK_RESULT_REPORTER_PLUGINS)
+    private readonly reporters: TaskResultReporterPlugin[] = []
+  ) {}
 
   async reportSuccess(task: Task, result: CodexRunResult): Promise<void> {
-    if (!task.externalId) {
+    const reporter = this.findReporter(task);
+    if (!reporter) {
       return;
     }
-    await this.meegleAdapter.addComment(task.externalId, this.buildComment("completed", task, result));
+    await reporter.reportSuccess(task, result);
   }
 
   async reportFailure(task: Task, result: CodexRunResult): Promise<void> {
-    if (!task.externalId) {
+    const reporter = this.findReporter(task);
+    if (!reporter) {
       return;
     }
-    await this.meegleAdapter.addComment(task.externalId, this.buildComment("failed", task, result));
+    await reporter.reportFailure(task, result);
   }
 
-  private buildComment(status: "completed" | "failed", task: Task, result: CodexRunResult): string {
-    const headline =
-      status === "completed"
-        ? `AutoDev Agent completed task ${task.id}`
-        : `AutoDev Agent failed task ${task.id}`;
-    const stderr = result.stderr ? `\nstderr:\n${this.truncate(result.stderr)}` : "";
-    const stdout = result.stdout ? `\nstdout:\n${this.truncate(result.stdout)}` : "";
-
-    return `${headline}\nexitCode: ${result.exitCode}${stderr}${stdout}`;
-  }
-
-  private truncate(value: string): string {
-    return value.length > 2000 ? `${value.slice(0, 2000)}\n...[truncated]` : value;
+  private findReporter(task: Task): TaskResultReporterPlugin | null {
+    const reporter = this.reporters.find((candidate) => candidate.source === task.source);
+    if (!reporter) {
+      this.logger.debug(`No result reporter registered for task source ${task.source}`);
+      return null;
+    }
+    return reporter;
   }
 }

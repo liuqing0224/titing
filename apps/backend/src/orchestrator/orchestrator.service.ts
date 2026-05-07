@@ -1,11 +1,12 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { AgentService } from "../agents/agent.service";
 import { ExecutionLogService } from "../execution-logs/execution-log.service";
+import { ExecutionEnginePlugin, ExecutionRunResult } from "../plugins/execution-engine.plugin";
+import { EXECUTION_ENGINE_PLUGIN } from "../plugins/plugin.tokens";
 import { Task } from "../tasks/task.entity";
 import { TaskService } from "../tasks/task.service";
 import { hasValidExecutionFields } from "../tasks/task-status";
-import { CodexRunner } from "./codex-runner";
 import { ResultReporterService } from "./result-reporter.service";
 
 const PRIORITY_RANK: Record<string, number> = {
@@ -23,7 +24,8 @@ export class OrchestratorService {
     private readonly taskService: TaskService,
     private readonly agentService: AgentService,
     private readonly executionLogService: ExecutionLogService,
-    private readonly codexRunner: CodexRunner,
+    @Inject(EXECUTION_ENGINE_PLUGIN)
+    private readonly executionEngine: ExecutionEnginePlugin,
     private readonly resultReporter: ResultReporterService
   ) {}
 
@@ -98,7 +100,7 @@ export class OrchestratorService {
     agent: NonNullable<Awaited<ReturnType<AgentService["findIdleAgent"]>>>
   ): Promise<void> {
     this.logger.log(`Task ${task.id} claimed by ${agent.id}, starting orchestration`);
-    const executionContext = this.codexRunner.getExecutionContext(task);
+    const executionContext = this.executionEngine.getExecutionContext(task);
     await this.executionLogService.append({
       taskId: task.id,
       agentId: agent.id,
@@ -109,9 +111,9 @@ export class OrchestratorService {
     await this.agentService.refreshHeartbeat(agent.id);
     const stopHeartbeatLoop = this.startHeartbeatLoop(agent.id);
 
-    let result: Awaited<ReturnType<CodexRunner["run"]>>;
+    let result: ExecutionRunResult;
     try {
-      result = await this.codexRunner.run(task, agent);
+      result = await this.executionEngine.runTask(task, agent);
     } finally {
       stopHeartbeatLoop();
     }
@@ -187,7 +189,7 @@ export class OrchestratorService {
   }
 
   private buildExecutionMetadata(
-    execution: ReturnType<CodexRunner["getExecutionContext"]> | Awaited<ReturnType<CodexRunner["run"]>>
+    execution: ReturnType<ExecutionEnginePlugin["getExecutionContext"]> | ExecutionRunResult
   ): Record<string, unknown> {
     return {
       repo: execution.repo,
@@ -214,7 +216,7 @@ export class OrchestratorService {
     };
   }
 
-  private getFailureMessage(result: Awaited<ReturnType<CodexRunner["run"]>>): string {
+  private getFailureMessage(result: ExecutionRunResult): string {
     if (result.stage === "clone") {
       return "Repository clone failed";
     }

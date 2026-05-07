@@ -8,7 +8,8 @@ import { normalizeStoredBranch } from "../tasks/task-branch";
 import { Task } from "../tasks/task.entity";
 import { hasValidExecutionFields } from "../tasks/task-status";
 import { BrowserLauncherService } from "./browser-launcher.service";
-import { MeegleAdapter, MeegleLoginPollInput } from "./meegle.adapter";
+import { MeegleLoginPollInput } from "./meegle.adapter";
+import { MeegleTaskSourcePlugin } from "./meegle-task-source.plugin";
 import { mapRawTaskToTaskInput, RawMeegleTask } from "./task-mapper";
 
 export type SyncItemAction = "created" | "updated" | "failed" | "recovered" | "resetToPending";
@@ -39,7 +40,7 @@ export class AdapterService {
     @InjectRepository(Task)
     private readonly taskRepository: Repository<Task>,
     private readonly executionLogService: ExecutionLogService,
-    private readonly meegleAdapter: MeegleAdapter,
+    private readonly taskSource: MeegleTaskSourcePlugin,
     private readonly browserLauncher: BrowserLauncherService,
     private readonly settingsService: SettingsService,
     @Optional()
@@ -58,11 +59,11 @@ export class AdapterService {
 
   async listRawTasks(): Promise<RawMeegleTask[]> {
     await this.ensureMeegleAuthenticated();
-    return this.meegleAdapter.listOpenTasks();
+    return this.taskSource.listOpenTasks();
   }
 
   async beginLogin() {
-    const login = await this.meegleAdapter.beginLogin();
+    const login = await this.taskSource.beginLogin();
     const verificationUri = login.verificationUriComplete || login.verificationUri;
     const openedViaSse = Boolean(this.eventsService?.hasSubscribers());
     if (openedViaSse) {
@@ -75,7 +76,7 @@ export class AdapterService {
   }
 
   async pollLogin(input: MeegleLoginPollInput) {
-    return this.meegleAdapter.pollLogin(input);
+    return this.taskSource.pollLogin(input);
   }
 
   private async upsertRawTask(rawTask: RawMeegleTask): Promise<SyncResult["items"][number]> {
@@ -216,7 +217,7 @@ export class AdapterService {
   private async runSync(): Promise<SyncResult> {
     this.logger.log("Starting Meegle sync");
     await this.ensureMeegleAuthenticated();
-    const rawTasks = await this.meegleAdapter.listOpenTasks();
+    const rawTasks = await this.taskSource.listOpenTasks();
     this.logger.log(`Fetched ${rawTasks.length} raw task(s) from Meegle`);
     const result = this.createEmptyResult();
 
@@ -232,7 +233,7 @@ export class AdapterService {
   }
 
   private async ensureMeegleAuthenticated(): Promise<void> {
-    const authStatus = await this.meegleAdapter.getAuthStatus();
+    const authStatus = await this.taskSource.getAuthStatus();
     if (authStatus.authenticated) {
       await this.settingsService.setMeegleLoginState({ browserPending: false });
       return;
@@ -259,7 +260,7 @@ export class AdapterService {
 
     while (Date.now() < deadline) {
       await this.sleep(Math.max(login.interval, 1) * 1000);
-      const status = await this.meegleAdapter.pollLogin({
+      const status = await this.taskSource.pollLogin({
         clientId: login.clientId,
         deviceCode: login.deviceCode,
         interval: login.interval,

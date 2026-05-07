@@ -3,41 +3,27 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Injectable, Logger, Optional } from "@nestjs/common";
+import { Inject } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Agent } from "../agents/agent.entity";
+import { AgentRuntimePlugin } from "../plugins/agent-runtime.plugin";
+import {
+  ExecutionContext,
+  ExecutionEnginePlugin,
+  ExecutionRunResult,
+  ExecutionRunStage
+} from "../plugins/execution-engine.plugin";
+import { AGENT_RUNTIME_PLUGIN } from "../plugins/plugin.tokens";
 import { resolveExecutionBranch } from "../tasks/task-branch";
 import { Task } from "../tasks/task.entity";
 
 const execFileAsync = promisify(execFile);
 
-export type CodexRunStage = "clone" | "checkout" | "workflow-prompts" | "execute";
+export type CodexRunStage = ExecutionRunStage;
 
-export type CodexExecutionContext = {
-  repo: string;
-  branch: string;
-  hostCwd: string;
-  containerCwd: string;
-  cloneUrl: string | null;
-  isAbsolutePath: boolean;
-  agentsMdPath: string;
-  workflowPromptsPath: string;
-};
+export type CodexExecutionContext = ExecutionContext & { isAbsolutePath: boolean };
 
-export type CodexRunResult = {
-  stage: CodexRunStage;
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-  timedOut: boolean;
-  branchCheckedOut: boolean;
-  codexStarted: boolean;
-  repo: string;
-  branch: string;
-  hostCwd: string;
-  containerCwd: string;
-  agentsMdPath: string;
-  workflowPromptsPath: string;
-};
+export type CodexRunResult = ExecutionRunResult;
 
 type WorkflowNode = {
   name: string;
@@ -74,7 +60,8 @@ class ExecFileProcessRunner implements ProcessRunner {
 }
 
 @Injectable()
-export class CodexRunner {
+export class CodexRunner implements ExecutionEnginePlugin {
+  readonly engine = "codex";
   private readonly maxBuffer = 20 * 1024 * 1024;
   private readonly defaultWorkflowHeading = "## Agents 默认执行流程";
   private readonly logger = new Logger(CodexRunner.name);
@@ -82,7 +69,10 @@ export class CodexRunner {
   constructor(
     private readonly configService: ConfigService,
     @Optional()
-    private readonly processRunner: ProcessRunner = new ExecFileProcessRunner()
+    private readonly processRunner: ProcessRunner = new ExecFileProcessRunner(),
+    @Optional()
+    @Inject(AGENT_RUNTIME_PLUGIN)
+    private readonly runtime?: AgentRuntimePlugin
   ) {}
 
   getExecutionContext(task: Task): CodexExecutionContext {
@@ -103,7 +93,6 @@ export class CodexRunner {
 
   async run(task: Task, agent: Agent): Promise<CodexRunResult> {
     const cliBin = this.configService.get<string>("CODEX_CLI_BIN", "codex");
-    const dockerBin = this.configService.get<string>("DOCKER_BIN", "/usr/bin/docker");
     const timeout = Number(this.configService.get<string>("CODEX_TIMEOUT_MS", "1800000"));
     const workspaceRoot = this.configService.get<string>("CODEX_WORKDIR", process.cwd());
     const executionContext = this.getExecutionContext(task);
@@ -115,7 +104,7 @@ export class CodexRunner {
     try {
       if (!executionContext.isAbsolutePath) {
         this.logger.log(`Task ${task.id}: preparing remote workspace at ${executionContext.hostCwd}`);
-        await this.prepareRemoteWorkspace(dockerBin, agent, executionContext, workspaceRoot, timeout);
+        await this.prepareRemoteWorkspace(agent, executionContext, workspaceRoot, timeout);
       }
     } catch (error) {
       return this.buildFailureResult("clone", error, executionContext, {
@@ -128,15 +117,11 @@ export class CodexRunner {
 
     try {
       this.logger.log(`Task ${task.id}: checking out branch ${executionContext.branch}`);
-      await this.processRunner.run(
-        dockerBin,
-        ["exec", "-w", executionContext.containerCwd, agent.containerName, "git", "checkout", executionContext.branch],
-        {
-          cwd: executionContext.hostCwd,
-          maxBuffer: this.maxBuffer,
-          timeout
-        }
-      );
+      await this.runRuntimeCommand(agent, executionContext.containerCwd, "git", ["checkout", executionContext.branch], {
+        cwd: executionContext.hostCwd,
+        maxBuffer: this.maxBuffer,
+        timeout
+      });
     } catch (error) {
       if (!this.isMissingBranchCheckoutError(error)) {
         return this.buildFailureResult("checkout", error, executionContext, {
@@ -149,9 +134,11 @@ export class CodexRunner {
 
       try {
         this.logger.warn(`Task ${task.id}: branch ${executionContext.branch} missing, creating it`);
-        await this.processRunner.run(
-          dockerBin,
-          ["exec", "-w", executionContext.containerCwd, agent.containerName, "git", "checkout", "-b", executionContext.branch],
+        await this.runRuntimeCommand(
+          agent,
+          executionContext.containerCwd,
+          "git",
+          ["checkout", "-b", executionContext.branch],
           {
             cwd: executionContext.hostCwd,
             maxBuffer: this.maxBuffer,
@@ -172,7 +159,7 @@ export class CodexRunner {
       this.logger.log(
         `Task ${task.id}: validating WORKFLOW_PROMPTS.md near ${executionContext.workflowPromptsPath}`
       );
-      await this.ensureWorkflowPromptsExists(dockerBin, agent, executionContext, timeout);
+      await this.ensureWorkflowPromptsExists(agent, executionContext, timeout);
     } catch (error) {
       return this.buildFailureResult("workflow-prompts", error, executionContext, {
         branchCheckedOut: true,
@@ -214,15 +201,12 @@ export class CodexRunner {
           this.logger.log(
             `Task ${task.id}: executing node ${node.name} iteration ${loopIndex}/${loopCount}`
           );
-          const executeResult = await this.processRunner.run(
-            dockerBin,
-            [
-              "exec",
-              "-w",
-              executionContext.containerCwd,
-              agent.containerName,
-              ...this.buildCodexExecArgs(cliBin, executionContext.containerCwd, node.prompt)
-            ],
+          const [command, ...args] = this.buildCodexExecArgs(cliBin, executionContext.containerCwd, node.prompt);
+          const executeResult = await this.runRuntimeCommand(
+            agent,
+            executionContext.containerCwd,
+            command,
+            args,
             {
               cwd: executionContext.hostCwd,
               maxBuffer: this.maxBuffer,
@@ -282,6 +266,10 @@ export class CodexRunner {
     }
   }
 
+  runTask(task: Task, agent: Agent): Promise<CodexRunResult> {
+    return this.run(task, agent);
+  }
+
   private resolveRepoTarget(
     rawRepo: string,
     workspaceRoot: string
@@ -324,7 +312,6 @@ export class CodexRunner {
   }
 
   private async prepareRemoteWorkspace(
-    dockerBin: string,
     agent: Agent,
     repoTarget: CodexExecutionContext,
     workspaceRoot: string,
@@ -341,24 +328,37 @@ export class CodexRunner {
     const parentDir = path.dirname(repoTarget.hostCwd);
     fs.mkdirSync(parentDir, { recursive: true });
     const containerParentDir = path.posix.dirname(repoTarget.containerCwd);
-    await this.processRunner.run(
-      dockerBin,
-      [
-        "exec",
-        "-w",
-        containerParentDir,
-        agent.containerName,
-        "git",
-        "clone",
-        repoTarget.cloneUrl,
-        path.posix.basename(repoTarget.containerCwd)
-      ],
+    await this.runRuntimeCommand(
+      agent,
+      containerParentDir,
+      "git",
+      ["clone", repoTarget.cloneUrl, path.posix.basename(repoTarget.containerCwd)],
       {
         cwd: workspaceRoot,
         maxBuffer: this.maxBuffer,
         timeout
       }
     );
+  }
+
+  private async runRuntimeCommand(
+    agent: Agent,
+    runtimeCwd: string,
+    command: string,
+    args: string[],
+    options: ProcessRunOptions
+  ): Promise<{ stdout: string; stderr: string }> {
+    if (this.runtime) {
+      return this.runtime.runCommand(agent, {
+        cwd: runtimeCwd,
+        command,
+        args,
+        options
+      });
+    }
+
+    const dockerBin = this.configService.get<string>("DOCKER_BIN", "/usr/bin/docker");
+    return this.processRunner.run(dockerBin, ["exec", "-w", runtimeCwd, agent.containerName, command, ...args], options);
   }
 
   private buildFailureResult(
@@ -744,22 +744,15 @@ export class CodexRunner {
   }
 
   private async ensureWorkflowPromptsExists(
-    dockerBin: string,
     agent: Agent,
     executionContext: CodexExecutionContext,
     timeout: number
   ): Promise<void> {
-    await this.processRunner.run(
-      dockerBin,
-      [
-        "exec",
-        "-w",
-        executionContext.containerCwd,
-        agent.containerName,
-        "sh",
-        "-lc",
-        "test -s 'knowledge/WORKFLOW_PROMPTS.md' || test -s 'WORKFLOW_PROMPTS.md'"
-      ],
+    await this.runRuntimeCommand(
+      agent,
+      executionContext.containerCwd,
+      "sh",
+      ["-lc", "test -s 'knowledge/WORKFLOW_PROMPTS.md' || test -s 'WORKFLOW_PROMPTS.md'"],
       {
         cwd: executionContext.hostCwd,
         maxBuffer: this.maxBuffer,
