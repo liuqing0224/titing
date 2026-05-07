@@ -1,233 +1,246 @@
 # AutoDev Agent
 
-AutoDev Agent 是一个 local-first 的 AI engineering orchestration system，用于把结构化产品任务转成可执行的研发工作流。
-It is a local-first AI engineering orchestration system that turns structured product tasks into executable engineering workflows.
+AutoDev Agent 是一个 local-first 的 AI engineering orchestration system。它把 Meegle 中的产品任务同步到本地，交给固定规模的 Agent 池调度执行，再通过 Codex CLI 在目标仓库的独立 `git worktree` 中跑完整的研发工作流。
 
-它把 task intake、agent scheduling、code execution、progress visibility 和 result feedback 串成一个统一控制面。
-核心系统只负责任务状态机、调度、Agent 状态、日志事件和插件编排；Meegle、Codex、local runtime 等具体能力作为默认内置插件接入。
+这个项目的重点不是做一个大而全的托管平台，而是先把一条实用链路跑通：任务接入、状态校验、Agent 调度、AI 执行、日志追踪和结果回写。
 
-## Why AutoDev Agent
+## 功能亮点
 
-- 把产品任务直接转成 runnable engineering jobs
-- 用 task status、agent health 和 execution logs 保持过程可观测
-- 用 workflow-driven prompt system 替代一次性手工 prompting
-- 基于你自己的 repositories、git worktree 和 Codex CLI 本地运行
-- 保持 Meegle 作为 upstream source of truth，同时让工程执行自动化
+- 从 Meegle CLI 同步 open tasks，并将任务字段标准化为本地 `Task`。
+- 支持自动同步和手动同步，同步间隔可在 Ops Console 中调整并持久化。
+- 通过 `pending -> queued -> running -> done/failed` 状态机管理任务生命周期。
+- 根据 `repo`、`branch`、`instruction` 校验任务是否可执行，失败原因会写入 execution logs。
+- 每个任务在独立 `git worktree` 中执行，减少多个任务共享工作区带来的干扰。
+- 使用目标仓库的 `knowledge/WORKFLOW_PROMPTS.md` 定义节点化执行流程。
+- 内置 Codex execution engine，按 workflow node 调用 `codex exec`。
+- 提供 Ops Console，查看任务、Agent、Dashboard stats、Meegle sync 设置和执行日志。
+- 通过 Server-Sent Events 推送 `task.lifecycle`、`agent.status` 等事件。
+- 执行结束后将成功或失败摘要回写到 Meegle work item。
 
-## Core Capabilities
-
-- **Task sync from Meegle**
-  从 Meegle CLI 拉取 open tasks，标准化字段并 upsert 到本地系统。
-- **Configurable auto-sync**
-  按固定间隔执行 Meegle sync，持久化同步间隔，并支持在 dashboard 中动态更新，无需重启服务。
-- **Workflow-based execution**
-  使用 repository-level `WORKFLOW_PROMPTS.md` 定义任务如何经过 planning、documentation、implementation、review 和 verification。
-- **Git worktree execution**
-  每个任务通过独立 worktree 执行，避免共享工作区互相干扰。
-- **Orchestrated task lifecycle**
-  让任务在 `pending -> queued -> running -> done/failed` 间流转，并带上 validation、retry 和 agent ownership tracking。
-- **Live dashboard**
-  在浏览器 UI 中查看任务总览、最近活动、agent capacity、失败任务和 sync 控制项。
-- **Execution logs**
-  通过结构化 stdout、stderr、stage 和 context metadata 查看完整执行历史。
-- **Result feedback to Meegle**
-  把成功或失败摘要回写到原始 Meegle work item。
-
-## How It Works
+## 系统架构
 
 ```text
+Meegle CLI
+    |
+    v
 Task Source Plugin -> Task Store -> Orchestrator Core -> Execution Engine Plugin
       ^                                 |                         |
       |                                 v                         v
 Result Reporter Plugin <- Execution Result <- Agent Runtime Plugin
       |
       v
- Dashboard / Events
+Ops Console / SSE / Execution Logs
 ```
 
-High-level flow:
+核心系统只负责通用编排能力：任务状态机、Agent 管理、调度、事件、日志和插件注册。具体的外部系统和运行方式都通过插件接入，目前仓库内置了 Meegle、Codex、local runtime、TypeORM store、file log store、SSE event bus 和 Ops Console。
 
-1. Task source plugin 将外部任务同步到本地数据库，默认实现是 Meegle。
-2. 带有有效 execution fields 的任务变成 runnable。
-3. Orchestrator 选择任务并分配给 idle agents。
-4. Execution engine plugin 执行任务，默认实现是 Codex workflow。
-5. Agent runtime plugin 提供本地命令运行环境，默认实现是 local host runtime。
-6. Execution logs 和状态变更通过 realtime stream 推送到前端。
-7. Result reporter plugin 回写执行摘要，默认实现是 Meegle comment。
+## 技术栈
 
-## Architecture
+- Backend：`NestJS`、`TypeORM`、`PostgreSQL`、`@nestjs/schedule`
+- Frontend：`React`、`Vite`、`TypeScript`
+- Runtime：`Codex CLI`、`git worktree`、local host command runner
+- Monorepo：`npm workspaces`
 
-### Backend
+## 内置插件
 
-- NestJS
-- TypeORM
-- PostgreSQL
-- `@nestjs/schedule`
-- Server-Sent Events 用于 realtime updates
+| 插件 | 类型 | 作用 |
+|------|------|------|
+| `meegle` | `composite` | 同步 Meegle 任务，并将执行结果回写为 Meegle comment |
+| `codex-executor` | `execution-engine` | 解析 `WORKFLOW_PROMPTS.md`，编排 `codex exec` 执行节点 |
+| `local-runtime` | `agent-runtime` | 在宿主机本地运行命令 |
+| `typeorm-store` | `composite` | 提供 `taskStore`、`agentStore`、`settingsStore` |
+| `file-log-store` | `composite` | 将 execution logs 写入本地文件 |
+| `sse-event-bus` | `composite` | 通过 SSE 广播系统事件 |
+| `ops-console` | `ui-backend` | 提供运维控制台后端和前端入口 |
 
-### Frontend
+插件由 `apps/server/src/plugin-loader.ts` 自动发现。只要在 `plugins/<plugin>/src/plugin.manifest.ts` 中导出符合 `ServerPluginManifest` 的 manifest，服务启动时就会加载。
 
-- React
-- Vite
-- TypeScript
-
-### Runtime
-
-- Local host runtime
-- Codex CLI execution
-- npm workspaces monorepo
-
-### Default Built-In Plugins
-
-- `MeegleTaskSourcePlugin`：通过 Meegle CLI 拉取任务并映射到本地 `Task`。
-- `MeegleResultReporterPlugin`：按 `task.source` 回写成功或失败摘要。
-- `CodexRunner` / `ExecutionEnginePlugin`：解析 `WORKFLOW_PROMPTS.md` 并编排 `codex exec`。
-- `LocalAgentRuntimeService` / `AgentRuntimePlugin`：在宿主机上执行命令，并为执行引擎提供命令运行环境。
-
-## Key Behaviors
-
-- Tasks 在进入 scheduling 前会先校验。
-- 缺少 `repo` 或 `instruction` 会导致任务校验失败，并写入 execution log。
-- Failed tasks 在后续 sync 中如果 execution fields 恢复有效，可重新回到 `pending`。
-- Done tasks 在 execution-critical fields 变化时会重置为 `pending`。
-- Agent pool 大小由配置固定控制。
-- Offline agents 通过 heartbeat timeout 检测。
-- Backend 可触发 Meegle login，并通知 frontend 在 host browser 中打开登录页。
-
-## Repository Layout
+## 目录结构
 
 ```text
 apps/
-  server/      NestJS host shell
-  web/         React host shell
+  server/                    NestJS host shell
+  web/                       React host shell
 packages/
-  core/        core state machine, scheduler, events, execution management
+  core/                      任务、Agent、调度、事件、日志和插件协议
 plugins/
-  meegle/      Meegle sync + settings
-  codex-executor/
-  local-runtime/
-  ops-console/
+  codex-executor/            Codex workflow execution engine
+  file-log-store/            文件日志存储
+  local-runtime/             本地命令运行时
+  meegle/                    Meegle task source、settings 和 result reporter
+  ops-console/               Ops Console UI plugin
+  sse-event-bus/             SSE event bus
+  typeorm-store/             PostgreSQL / TypeORM store
 docs/
-  templates/   Reusable workflow prompt templates
-pm/
-  prd.md       Product requirement reference
+  pm/prd.md                  产品需求文档
+  templates/                 Workflow prompt 模板
+logs/                        本地 execution log 输出目录
 ```
 
-## Quick Start
+## 快速开始
 
-### 1. Install dependencies
+### 环境准备
+
+本地需要先准备：
+
+- `Node.js` 和 `npm`
+- `PostgreSQL`
+- `git`
+- `codex` CLI
+- `meegle` CLI
+
+如果需要让 AutoDev Agent 执行真实仓库任务，目标仓库还应提供 `AGENTS.md`，并在 `knowledge/WORKFLOW_PROMPTS.md` 中声明 workflow。仓库根目录的 `WORKFLOW_PROMPTS.md` 也可作为兼容位置使用。
+
+### 安装依赖
 
 ```bash
 npm install
 cp .env.example .env
 ```
 
-安装依赖并初始化环境变量。  
-Install dependencies and bootstrap your local environment.
+根据你的本地环境修改 `.env`，尤其是数据库、Meegle、Codex 和 workspace 相关配置。
 
-### 2. Start PostgreSQL
+### 准备数据库
 
-```bash
-psql -h localhost -U autodev -d autodev
+`.env.example` 默认连接到：
+
+```text
+postgresql://autodev:autodev@localhost:55432/autodev
 ```
 
-先启动数据库。  
-Start the database first.
+确认数据库可连接后，执行 migration：
 
-### 3. Start backend and frontend
+```bash
+npm run migration:run -w apps/server
+```
+
+### 启动开发服务
+
+后端和前端需要分别启动：
 
 ```bash
 npm run dev:backend
 npm run dev:frontend
 ```
 
-分别启动后端和前端开发服务。  
-Run backend and frontend in separate dev processes.
+默认地址：
 
-### Default addresses
+- Frontend：`http://localhost:5173`
+- Backend API：`http://localhost:3000/api`
+- PostgreSQL：`localhost:55432`
 
-- Frontend: `http://localhost:5173`
-- Backend API: `http://localhost:3000/api`
-- PostgreSQL: `localhost:55432`
-
-## Validation
+## 常用命令
 
 ```bash
+npm run dev:backend
+npm run dev:frontend
 npm test
 npm run build
+npm run migration:run -w apps/server
+npm run migration:revert -w apps/server
 ```
 
-## Required Runtime Assumptions
+## 配置
 
-- `git` is available on the host and can create worktrees.
-- `codex` CLI is available on the host.
-- Repositories executed by AutoDev Agent should provide `AGENTS.md`.
-- Workflow-driven repositories should provide `knowledge/WORKFLOW_PROMPTS.md` or `WORKFLOW_PROMPTS.md`.
-- Meegle CLI must be available where sync/login operations run.
+配置通过 `.env` 注入，完整示例见 `.env.example`。
 
-## Configuration
+### 基础服务
 
-### Common environment variables
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `BACKEND_PORT` | `3000` | Backend API 端口 |
+| `VITE_API_BASE_URL` | `http://localhost:3000/api` | Frontend 请求后端的 API base URL |
+| `DATABASE_HOST` | `localhost` | PostgreSQL host |
+| `DATABASE_PORT` | `55432` | PostgreSQL port |
+| `DATABASE_USER` | `autodev` | PostgreSQL user |
+| `DATABASE_PASSWORD` | `autodev` | PostgreSQL password |
+| `DATABASE_NAME` | `autodev` | PostgreSQL database |
 
-- `BACKEND_PORT`
-- `DATABASE_HOST`
-- `DATABASE_PORT`
-- `DATABASE_USER`
-- `DATABASE_PASSWORD`
-- `DATABASE_NAME`
-- `AGENT_POOL_SIZE`
-- `AGENT_HEARTBEAT_TIMEOUT_SECONDS`
-- `CODEX_CLI_BIN`
-- `CODEX_WORKDIR`
-- `CODEX_TIMEOUT_MS`
+### Agent 与执行
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `AGENT_POOL_SIZE` | `2` | 固定 Agent 池大小 |
+| `AGENT_HEARTBEAT_TIMEOUT_SECONDS` | `60` | Agent heartbeat 超时时间 |
+| `CODEX_CLI_BIN` | `codex` | Codex CLI 可执行文件 |
+| `CODEX_WORKDIR` | `/tmp/autodev-agent/workspaces` | 目标仓库和 worktree 的工作目录 |
+| `CODEX_TIMEOUT_MS` | `1800000` | 单次 Codex 执行超时时间 |
+| `CODEX_IGNORE_USER_CONFIG` | `false` | 是否忽略用户 Codex 配置 |
 
 ### Meegle
 
-- `MEEGLE_CLI_BIN`
-- `MEEGLE_SYNC_ENABLED`
-- `MEEGLE_SYNC_INTERVAL_MINUTES`
-- `MEEGLE_PROJECT_KEY`
-- `MEEGLE_QUERY_MQL`
-- `MEEGLE_DETAIL_FIELDS`
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `MEEGLE_CLI_BIN` | `meegle` | Meegle CLI 可执行文件 |
+| `MEEGLE_SYNC_ENABLED` | `true` | 是否启用自动同步 |
+| `MEEGLE_SYNC_INTERVAL_MINUTES` | `5` | 自动同步间隔 |
+| `MEEGLE_SOURCE_MODE` | 空 | Meegle 任务来源模式 |
+| `MEEGLE_PROJECT_KEY` | 空 | Meegle 项目 key |
+| `MEEGLE_QUERY_MQL` | 空 | 自定义 MQL 查询 |
+| `MEEGLE_DETAIL_FIELDS` | `repo,branch,instruction,priority,description,title` | 同步任务详情时读取的字段 |
+| `MEEGLE_LATEST_SPRINT_DETAIL_FIELDS` | `description` | 拉取最新 sprint 任务时读取的字段 |
 
-Notes:
-
-- Auto-sync 默认开启。
-- Sync interval 可以在 dashboard 中更新，并会持久化保存。
-- 当 Meegle 需要认证时，frontend 会在收到 backend SSE event 后，在 host browser 中打开登录链接。
+当 Meegle 需要认证时，后端会触发 login 流程，前端收到 SSE event 后会在 host browser 中打开登录页。
 
 ## Workflow Prompt System
 
-AutoDev Agent 不会硬编码你的项目 workflow。
-Instead, each target repository can define its own node-based execution flow through `WORKFLOW_PROMPTS.md`.
+AutoDev Agent 不把研发流程写死在代码里。每个目标仓库可以通过 `WORKFLOW_PROMPTS.md` 定义自己的节点顺序、节点 prompt、循环规则和产物约束。
 
-可以从这个通用模板开始：
+Codex executor 默认查找：
 
-- [docs/templates/WORKFLOW_PROMPTS.example.md](/Users/l/Documents/work/code/demo/autoDevAgent/docs/templates/WORKFLOW_PROMPTS.example.md)
+```text
+knowledge/WORKFLOW_PROMPTS.md
+```
 
-这个模板刻意保持抽象。
-Replace the node names, skills, output paths, and execution rules with your own project workflow.
+可以从模板开始改：
 
-## Best Fit
+- [`docs/templates/WORKFLOW_PROMPTS.example.md`](docs/templates/WORKFLOW_PROMPTS.example.md)
 
-如果你想做下面这些事，AutoDev Agent 会比较适合：
-AutoDev Agent is a strong fit if you want to:
+一个实际 workflow 通常会把任务拆成 planning、documentation、implementation、review、verification 等节点。每个节点会生成独立 prompt，并由 `codex exec` 在对应 worktree 中执行。
 
-- connect PM tasks to engineering execution
-- run AI coding flows against real repositories
-- keep a small internal agent pool instead of using a fully hosted platform
-- standardize how AI agents plan, implement, review, and document work
+## 任务生命周期
 
-## Current Scope
+```text
+pending -> queued -> running -> done
+                         |
+                         v
+                       failed
+```
 
-当前仓库仍然定位为一个 practical local-first MVP：
+- `pending` 任务会先校验 `repo` 和 `instruction`，字段无效会进入 `failed`。
+- `queued` 任务等待空闲 Agent 认领。
+- `running` 任务由 Orchestrator 调用 execution engine 执行。
+- Agent offline 时，运行中的任务会尝试恢复或重试。
+- `failed` 任务在后续同步中如果 execution fields 恢复有效，可重新回到 `pending`。
+- `done` 任务在 `repo`、`branch`、`instruction` 等执行关键字段变化时会重新回到 `pending`。
 
-- automatic scheduling
-- fixed-size agent pool
-- Meegle integration through CLI
-- realtime dashboard
-- workflow-driven Codex execution
-- git worktree per task
+## API 与可观测性
 
-它的目标不是一次性做成大而全的平台，而是先把“任务接入、Agent 调度、AI 执行、结果回写、过程可观测”这条链路真正跑通。
-It is designed to be useful now, while still leaving room to evolve into a more general internal engineering automation platform.
+当前 UI 以 Ops Console 为主，后端提供任务、Agent、ExecutionLog、Dashboard 和 Meegle adapter 相关 API。状态变化通过 SSE 推送，前端在收到事件后重新拉取任务、Agent 和 Dashboard 快照，避免长连接日志流带来的复杂度。
+
+Execution logs 会记录 stage、stdout、stderr、exit code、timeout、worktree path、`AGENTS.md` 路径和 `WORKFLOW_PROMPTS.md` 路径。调试一次任务失败时，通常先从对应任务的 execution logs 开始看。
+
+## 当前范围
+
+这个仓库仍然是一个 local-first MVP，已经覆盖：
+
+- Meegle CLI 任务同步
+- 固定规模 Agent pool
+- 自动调度与生命周期管理
+- Codex workflow execution
+- `git worktree` 隔离执行
+- ExecutionLog 查询
+- Ops Console 和 SSE 实时更新
+- Meegle comment 回写
+
+暂不覆盖：
+
+- GitHub 官方集成
+- Webhook 外部推送
+- 动态 Agent pool sizing
+- 托管式远程执行平台
+- 自动创建 PR 的完整流程
+
+## 适用场景
+
+AutoDev Agent 更适合内部工程自动化试点：你已经有稳定的 PM 任务来源，也希望 AI agent 在自己的仓库、自己的凭据和自己的本地环境中执行。它让团队先把“任务到代码执行”的流程标准化，再决定哪些部分需要走向更强的平台化。
