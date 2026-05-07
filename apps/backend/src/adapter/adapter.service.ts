@@ -4,7 +4,7 @@ import { Repository } from "typeorm";
 import { EventsService } from "../events/events.service";
 import { ExecutionLogService } from "../execution-logs/execution-log.service";
 import { SettingsService } from "../settings/settings.service";
-import { resolveExecutionBranch } from "../tasks/task-branch";
+import { normalizeStoredBranch } from "../tasks/task-branch";
 import { Task } from "../tasks/task.entity";
 import { hasValidExecutionFields } from "../tasks/task-status";
 import { BrowserLauncherService } from "./browser-launcher.service";
@@ -88,7 +88,7 @@ export class AdapterService {
       title: input.title,
       description: input.description,
       repo: input.repo,
-      branch: resolveExecutionBranch(input.branch),
+      branch: normalizeStoredBranch(input.branch),
       instruction: input.instruction,
       priority: input.priority,
       taskType: input.taskType

@@ -762,6 +762,26 @@ describe("CodexRunner", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  it("does not create the branch when checkout fails for another reason", async () => {
+    const processRunner = {
+      run: jest
+        .fn()
+        .mockImplementationOnce(async () => {
+          throw Object.assign(new Error("fatal: detected dubious ownership in repository"), {
+            code: 128,
+            stderr: "fatal: detected dubious ownership in repository"
+          });
+        })
+    };
+    const runner = new CodexRunner(createConfigService({}) as never, processRunner);
+
+    const result = await runner.run(createTask({ branch: "feature/existing" }), createAgent());
+
+    expect(processRunner.run).toHaveBeenCalledTimes(1);
+    expect(result.stage).toBe("checkout");
+    expect(result.exitCode).toBe(128);
+  });
+
   it("generates a feature branch name when the task branch is empty", () => {
     jest.useFakeTimers().setSystemTime(new Date("2026-05-05T21:01:02.000Z"));
     const runner = new CodexRunner(createConfigService({}) as never);

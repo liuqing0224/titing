@@ -3,7 +3,7 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { EventsService } from "../events/events.service";
 import { ExecutionLogService } from "../execution-logs/execution-log.service";
-import { resolveExecutionBranch } from "./task-branch";
+import { normalizeStoredBranch, resolveExecutionBranch } from "./task-branch";
 import { Task, TaskPriority, TaskStatus } from "./task.entity";
 import { hasValidExecutionFields, TERMINAL_TASK_STATUSES } from "./task-status";
 
@@ -105,7 +105,7 @@ export class TaskService {
       task.repo = input.repo;
     }
     if (input.branch !== undefined) {
-      task.branch = resolveExecutionBranch(input.branch);
+      task.branch = normalizeStoredBranch(input.branch);
     }
     if (input.instruction !== undefined) {
       task.instruction = input.instruction;

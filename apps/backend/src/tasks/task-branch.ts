@@ -1,12 +1,16 @@
 const BRANCH_PREFIX = "feature";
 
 export function resolveExecutionBranch(branch?: string | null, now = new Date()): string {
-  const trimmed = branch?.trim();
+  const trimmed = normalizeStoredBranch(branch);
   if (trimmed) {
     return trimmed;
   }
 
   return `${BRANCH_PREFIX}/${formatBranchTimestamp(now)}`;
+}
+
+export function normalizeStoredBranch(branch?: string | null): string {
+  return branch?.trim() ?? "";
 }
 
 function formatBranchTimestamp(date: Date): string {

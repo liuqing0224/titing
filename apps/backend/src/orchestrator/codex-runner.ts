@@ -138,6 +138,15 @@ export class CodexRunner {
         }
       );
     } catch (error) {
+      if (!this.isMissingBranchCheckoutError(error)) {
+        return this.buildFailureResult("checkout", error, executionContext, {
+          branchCheckedOut: false,
+          codexStarted: false,
+          stdout: "",
+          stderr: ""
+        });
+      }
+
       try {
         this.logger.warn(`Task ${task.id}: branch ${executionContext.branch} missing, creating it`);
         await this.processRunner.run(
@@ -713,6 +722,25 @@ export class CodexRunner {
 
   private toTomlString(value: string): string {
     return JSON.stringify(value);
+  }
+
+  private isMissingBranchCheckoutError(error: unknown): boolean {
+    const output = this.readCheckoutErrorText(error).toLowerCase();
+    return (
+      output.includes("pathspec") ||
+      output.includes("did not match any file(s) known to git") ||
+      output.includes("not a commit")
+    );
+  }
+
+  private readCheckoutErrorText(error: unknown): string {
+    if (!(error instanceof Error)) {
+      return "";
+    }
+
+    const stderr = "stderr" in error && typeof error.stderr === "string" ? error.stderr : "";
+    const stdout = "stdout" in error && typeof error.stdout === "string" ? error.stdout : "";
+    return [error.message, stderr, stdout].filter(Boolean).join("\n");
   }
 
   private async ensureWorkflowPromptsExists(

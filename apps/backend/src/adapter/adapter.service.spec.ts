@@ -213,8 +213,7 @@ describe("AdapterService", () => {
     expect(settingsService.setMeegleLoginState).toHaveBeenLastCalledWith({ browserPending: false });
   });
 
-  it("generates a feature branch when synced task has no branch", async () => {
-    jest.useFakeTimers().setSystemTime(new Date("2026-05-05T21:01:02.000Z"));
+  it("keeps branch empty when synced task has no branch", async () => {
     const repository = createRepository();
     const service = new AdapterService(
       repository as never,
@@ -234,8 +233,36 @@ describe("AdapterService", () => {
 
     await service.sync();
 
-    expect(Array.from(repository.store.values())[0]?.branch).toBe("feature/20260506050102");
-    jest.useRealTimers();
+    expect(Array.from(repository.store.values())[0]?.branch).toBe("");
+  });
+
+  it("does not reset a done task when repeated sync still has empty branch", async () => {
+    const repository = createRepository([
+      createTask({
+        status: "done",
+        branch: ""
+      })
+    ]);
+    const service = new AdapterService(
+      repository as never,
+      createLogService() as never,
+      createMeegleAdapter([
+        {
+          id: "MEEGLE-1",
+          title: "Existing task",
+          repo: "demo/repo",
+          branch: "",
+          instruction: "Old instruction"
+        }
+      ]) as never,
+      createBrowserLauncher() as never,
+      createSettingsService() as never
+    );
+
+    const result = await service.sync();
+
+    expect(result.summary.resetToPending).toBe(0);
+    expect(repository.store.get("auto-existing")?.status).toBe("done");
   });
 
   it("opens browser from beginLogin and marks pending state", async () => {
