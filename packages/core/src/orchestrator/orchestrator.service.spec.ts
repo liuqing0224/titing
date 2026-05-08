@@ -146,7 +146,9 @@ describe("OrchestratorService", () => {
           repoRoot: expect.stringContaining("/demo/repo"),
           worktreePath: "/workspace/demo/repo",
           agentsMdPath: "/workspace/demo/repo/AGENTS.md",
-          workflowPromptsPath: "/workspace/demo/repo/knowledge/WORKFLOW_PROMPTS.md"
+          workflowPromptsPath: "/workspace/demo/repo/knowledge/WORKFLOW_PROMPTS.md",
+          executionEngine: "codex",
+          executionEngineRunnerClass: "Object"
         })
       })
     );
@@ -164,11 +166,15 @@ describe("OrchestratorService", () => {
           branchCheckedOut: true,
           codexStarted: true,
           agentsMdPath: "/workspace/demo/repo/AGENTS.md",
-          workflowPromptsPath: "/workspace/demo/repo/knowledge/WORKFLOW_PROMPTS.md"
+          workflowPromptsPath: "/workspace/demo/repo/knowledge/WORKFLOW_PROMPTS.md",
+          executionEngine: "codex",
+          executionEngineRunnerClass: "Object"
         })
       })
     );
     expect(taskService.markDoneInternal).toHaveBeenCalledWith("auto-1", {
+      executionEngine: "codex",
+      executionEngineRunnerClass: "Object",
       repo: "demo/repo",
       branch: "main",
       repoRoot: expect.stringContaining("/demo/repo"),
@@ -213,6 +219,8 @@ describe("OrchestratorService", () => {
       "auto-1",
       "Codex exited abnormally while following WORKFLOW_PROMPTS.md workflow",
       {
+        executionEngine: "codex",
+        executionEngineRunnerClass: "Object",
         repo: "demo/repo",
         branch: "main",
         repoRoot: expect.stringContaining("/demo/repo"),
@@ -265,6 +273,8 @@ describe("OrchestratorService", () => {
       "auto-1",
       "Branch checkout failed in project directory",
       expect.objectContaining({
+        executionEngine: "codex",
+        executionEngineRunnerClass: "Object",
         stage: "checkout",
         exitCode: 128,
         branchCheckedOut: false,
@@ -303,6 +313,8 @@ describe("OrchestratorService", () => {
       "auto-1",
       "Project WORKFLOW_PROMPTS.md is missing or invalid",
       expect.objectContaining({
+        executionEngine: "codex",
+        executionEngineRunnerClass: "Object",
         stage: "workflow-prompts",
         exitCode: 1,
         branchCheckedOut: true,
@@ -370,6 +382,7 @@ describe("OrchestratorService", () => {
     const taskService = createTaskService([task]);
     const agentService = createAgentService([agent]);
     const runner = {
+      engine: "codex",
       getExecutionContext: jest.fn(
         (runnerTask: Task): ExecutionContext => ({
           repo: runnerTask.repo,
@@ -435,6 +448,7 @@ describe("OrchestratorService", () => {
     const taskService = createTaskService([task]);
     const agentService = createAgentService([agent]);
     const runner = {
+      engine: "codex",
       getExecutionContext: jest.fn(
         (runnerTask: Task): ExecutionContext => ({
           repo: runnerTask.repo,
@@ -569,9 +583,11 @@ function createExecutionLogService() {
 }
 
 function createRunner(
-  result: Partial<ExecutionRunResult> & Pick<ExecutionRunResult, "exitCode" | "stdout" | "stderr">
+  result: Partial<ExecutionRunResult> & Pick<ExecutionRunResult, "exitCode" | "stdout" | "stderr">,
+  engine: string = "codex"
 ) {
   return {
+    engine,
     getExecutionContext: jest.fn(
       (task: Task): ExecutionContext => ({
         repo: task.repo,

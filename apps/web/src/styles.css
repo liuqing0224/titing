@@ -679,6 +679,139 @@ textarea {
   word-break: break-word;
 }
 
+.log-entry-message {
+  margin: 8px 0 0;
+  line-height: 1.45;
+}
+
+.log-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.log-status-pill--failed {
+  background: rgba(255, 99, 99, 0.12);
+  color: #ff8a8a;
+  border: 1px solid rgba(255, 99, 99, 0.28);
+}
+
+.log-status-pill--running {
+  background: rgba(125, 255, 184, 0.1);
+  color: var(--accent-strong);
+  border: 1px solid rgba(125, 255, 184, 0.22);
+}
+
+.log-status-pill--queued {
+  background: rgba(120, 160, 255, 0.1);
+  color: #9cb7ff;
+  border: 1px solid rgba(120, 160, 255, 0.22);
+}
+
+.log-status-pill--done {
+  background: rgba(125, 255, 184, 0.16);
+  color: var(--accent);
+  border: 1px solid rgba(125, 255, 184, 0.3);
+}
+
+.log-status-pill--neutral {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.log-entry--failed {
+  border-color: rgba(255, 99, 99, 0.18);
+}
+
+.log-failure-hint {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 180, 72, 0.08);
+  border: 1px solid rgba(255, 180, 72, 0.22);
+  color: #ffd4a8;
+}
+
+.log-failure-hint strong {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 212, 168, 0.85);
+  margin-bottom: 6px;
+}
+
+.log-failure-hint p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: #ffe7cf;
+}
+
+.log-output {
+  margin-top: 10px;
+}
+
+.log-output summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  font-weight: 600;
+  color: var(--accent-strong);
+}
+
+.log-output summary::-webkit-details-marker {
+  display: none;
+}
+
+.log-output summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 6px;
+  transition: transform 0.15s ease;
+  color: var(--muted);
+}
+
+.log-output[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.log-output-meta {
+  font-weight: 400;
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+.log-output--stderr summary {
+  color: #ff9c9c;
+}
+
+.log-output-expand {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px dashed rgba(125, 255, 184, 0.25);
+  background: transparent;
+  color: var(--accent-strong);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.log-output-expand:hover {
+  border-color: rgba(125, 255, 184, 0.45);
+  background: rgba(125, 255, 184, 0.06);
+}
+
 @media (max-width: 1080px) {
   .app-grid {
     grid-template-columns: 1fr;
