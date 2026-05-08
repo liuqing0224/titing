@@ -1,4 +1,4 @@
-import { ServerPluginManifest } from "../../../packages/core/src/plugins/plugin.manifest";
+import { ServerPluginManifest } from "@autodev-agent/plugin-api";
 import { OpsConsoleModule } from "./ops-console.module";
 
 export const opsConsolePluginManifest: ServerPluginManifest = {

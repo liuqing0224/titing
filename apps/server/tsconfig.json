@@ -11,6 +11,7 @@
   "include": [
     "src/**/*.ts",
     "../../packages/core/src/**/*.ts",
+    "../../packages/plugin-api/src/**/*.ts",
     "../../plugins/*/src/**/*.ts"
   ],
   "exclude": [
@@ -19,6 +20,7 @@
     "test",
     "**/*.spec.ts",
     "../../packages/core/src/**/*.spec.ts",
+    "../../packages/plugin-api/src/**/*.spec.ts",
     "../../plugins/*/src/**/*.spec.ts",
     "../../plugins/**/web/**/*.ts",
     "../../plugins/**/web/**/*.tsx"

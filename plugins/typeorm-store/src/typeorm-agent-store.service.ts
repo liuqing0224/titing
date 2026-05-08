@@ -1,8 +1,8 @@
 import { Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
-import { AgentStorePlugin } from "../../../packages/core/src/plugins/agent-store.plugin";
-import { Agent } from "../../../packages/core/src/agents/agent.entity";
+import { Agent } from "@autodev-agent/core";
+import { AgentStorePlugin } from "@autodev-agent/plugin-api";
 
 @Injectable()
 export class TypeOrmAgentStoreService implements AgentStorePlugin {

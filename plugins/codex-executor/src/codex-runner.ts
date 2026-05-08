@@ -3,18 +3,20 @@ import path from "node:path";
 import { Injectable, Logger, Optional } from "@nestjs/common";
 import { Inject } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { Agent } from "../../../packages/core/src/agents/agent.entity";
-import { ExecutionLogService } from "../../../packages/core/src/execution-logs/execution-log.service";
-import { AgentRuntimePlugin, ProcessRunOptions } from "../../../packages/core/src/plugins/agent-runtime.plugin";
 import {
+  AgentRecord,
+  AgentRuntimePlugin,
   ExecutionContext,
   ExecutionEnginePlugin,
   ExecutionRunResult,
-  ExecutionRunStage
-} from "../../../packages/core/src/plugins/execution-engine.plugin";
-import { AGENT_RUNTIME_PLUGIN } from "../../../packages/core/src/plugins/plugin.tokens";
-import { resolveExecutionBranch } from "../../../packages/core/src/tasks/task-branch";
-import { Task } from "../../../packages/core/src/tasks/task.entity";
+  ExecutionRunStage,
+  EXECUTION_LOG_STORE_PLUGIN,
+  ExecutionLogStorePlugin,
+  ProcessRunOptions,
+  TaskRecord,
+  AGENT_RUNTIME_PLUGIN,
+  resolveExecutionBranch
+} from "@autodev-agent/plugin-api";
 
 export type CodexRunStage = ExecutionRunStage;
 
@@ -47,10 +49,11 @@ export class CodexRunner implements ExecutionEnginePlugin {
     @Inject(AGENT_RUNTIME_PLUGIN)
     private readonly runtime?: AgentRuntimePlugin,
     @Optional()
-    private readonly executionLogService?: ExecutionLogService
+    @Inject(EXECUTION_LOG_STORE_PLUGIN)
+    private readonly executionLogStore?: ExecutionLogStorePlugin
   ) {}
 
-  getExecutionContext(task: Task): CodexExecutionContext {
+  getExecutionContext(task: TaskRecord): CodexExecutionContext {
     const workspaceRoot = this.configService.get<string>("CODEX_WORKDIR", process.cwd());
     const repoTarget = this.resolveRepoTarget(task, workspaceRoot);
 
@@ -66,7 +69,7 @@ export class CodexRunner implements ExecutionEnginePlugin {
     };
   }
 
-  async run(task: Task, agent: Agent): Promise<CodexRunResult> {
+  async run(task: TaskRecord, agent: AgentRecord): Promise<CodexRunResult> {
     const cliBin = this.configService.get<string>("CODEX_CLI_BIN", "codex");
     const timeout = Number(this.configService.get<string>("CODEX_TIMEOUT_MS", "1800000"));
     const workspaceRoot = this.configService.get<string>("CODEX_WORKDIR", process.cwd());
@@ -244,12 +247,12 @@ export class CodexRunner implements ExecutionEnginePlugin {
     }
   }
 
-  runTask(task: Task, agent: Agent): Promise<CodexRunResult> {
+  runTask(task: TaskRecord, agent: AgentRecord): Promise<CodexRunResult> {
     return this.run(task, agent);
   }
 
   private resolveRepoTarget(
-    task: Task,
+    task: TaskRecord,
     workspaceRoot: string
   ): {
     repo: string;
@@ -293,8 +296,8 @@ export class CodexRunner implements ExecutionEnginePlugin {
   }
 
   private async prepareWorktreeWorkspace(
-    task: Task,
-    agent: Agent,
+    task: TaskRecord,
+    agent: AgentRecord,
     repoTarget: CodexExecutionContext,
     workspaceRoot: string,
     timeout: number
@@ -344,7 +347,7 @@ export class CodexRunner implements ExecutionEnginePlugin {
   }
 
   private async runRuntimeCommand(
-    agent: Agent,
+    agent: AgentRecord,
     runtimeCwd: string,
     command: string,
     args: string[],
@@ -418,11 +421,11 @@ export class CodexRunner implements ExecutionEnginePlugin {
       metadata?: Record<string, unknown>;
     }
   ): Promise<void> {
-    if (!this.executionLogService) {
+    if (!this.executionLogStore) {
       return;
     }
 
-    await this.executionLogService.append({
+    await this.executionLogStore.append({
       taskId,
       agentId,
       status,
@@ -456,7 +459,7 @@ export class CodexRunner implements ExecutionEnginePlugin {
     });
   }
 
-  private buildWorkflowNodes(task: Task, executionContext: CodexExecutionContext): WorkflowNode[] {
+  private buildWorkflowNodes(task: TaskRecord, executionContext: CodexExecutionContext): WorkflowNode[] {
     const { workflowPromptsContent, resolvedWorkflowPromptsPath } = this.loadWorkflowDefinitions(
       executionContext.worktreePath
     );
@@ -588,7 +591,7 @@ export class CodexRunner implements ExecutionEnginePlugin {
   }
 
   private buildWorkflowVariables(
-    task: Task,
+    task: TaskRecord,
     executionContext: CodexExecutionContext
   ): Record<string, string> {
     const projectName = path.posix.basename(executionContext.repoRoot);
@@ -797,7 +800,7 @@ export class CodexRunner implements ExecutionEnginePlugin {
   }
 
   private async ensureWorkflowPromptsExists(
-    agent: Agent,
+    agent: AgentRecord,
     executionContext: CodexExecutionContext,
     timeout: number
   ): Promise<void> {

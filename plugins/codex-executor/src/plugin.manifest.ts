@@ -1,4 +1,4 @@
-import { ServerPluginManifest } from "../../../packages/core/src/plugins/plugin.manifest";
+import { ServerPluginManifest } from "@autodev-agent/plugin-api";
 import { CodexExecutorModule } from "./codex-executor.module";
 import { CodexRunner } from "./codex-runner";
 

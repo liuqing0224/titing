@@ -1,5 +1,5 @@
 import { DynamicModule, Global, Logger, Module, Provider } from "@nestjs/common";
-import { ServerPluginManifest } from "./plugin.manifest";
+import { ServerPluginManifest } from "@autodev-agent/plugin-api";
 import {
   AGENT_RUNTIME_PLUGIN,
   AGENT_STORE_PLUGIN,

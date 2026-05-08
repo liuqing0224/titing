@@ -1,0 +1,12 @@
+{
+  "name": "@autodev-agent/plugin-api",
+  "private": true,
+  "version": "0.1.0",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@nestjs/common": "^11.1.19",
+    "rxjs": "^7.8.2",
+    "typeorm": "^0.3.28"
+  }
+}

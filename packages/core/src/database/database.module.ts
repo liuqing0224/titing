@@ -1,8 +1,8 @@
 import { DynamicModule, Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
+import { PluginEntityClass } from "@autodev-agent/plugin-api";
 import { Agent } from "../agents/agent.entity";
-import { PluginEntityClass } from "../plugins/plugin.manifest";
 import { Task } from "../tasks/task.entity";
 import { TaskLifecycle1714406400001 } from "./migrations/1714406400001-task-lifecycle";
 

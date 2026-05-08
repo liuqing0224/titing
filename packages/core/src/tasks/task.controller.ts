@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Headers, Param, Patch, Post, Query } from "@nestjs/common";
-import { Task, TaskPriority, TaskStatus } from "./task.entity";
+import { TaskPriority, TaskStatus } from "@autodev-agent/plugin-api";
+import { Task } from "./task.entity";
 import { TaskService } from "./task.service";
 import { UpdateTaskDto } from "./dto/update-task.dto";
 

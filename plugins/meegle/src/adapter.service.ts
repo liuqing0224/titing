@@ -1,11 +1,15 @@
 import { Inject, Injectable, Logger, Optional, UnauthorizedException } from "@nestjs/common";
-import { EventsService } from "../../../packages/core/src/events/events.service";
-import { ExecutionLogService } from "../../../packages/core/src/execution-logs/execution-log.service";
-import { TASK_STORE_PLUGIN } from "../../../packages/core/src/plugins/plugin.tokens";
-import { TaskStorePlugin } from "../../../packages/core/src/plugins/task-store.plugin";
-import { normalizeStoredBranch } from "../../../packages/core/src/tasks/task-branch";
-import { Task } from "../../../packages/core/src/tasks/task.entity";
-import { hasValidExecutionFields } from "../../../packages/core/src/tasks/task-status";
+import {
+  EVENT_BUS_PLUGIN,
+  EXECUTION_LOG_STORE_PLUGIN,
+  EventBusPlugin,
+  ExecutionLogStorePlugin,
+  TASK_STORE_PLUGIN,
+  TaskRecord,
+  TaskStorePlugin,
+  hasValidExecutionFields,
+  normalizeStoredBranch
+} from "@autodev-agent/plugin-api";
 import { BrowserLauncherService } from "./browser-launcher.service";
 import { SettingsService } from "./settings.service";
 import { MeegleLoginPollInput } from "./meegle.adapter";
@@ -39,12 +43,14 @@ export class AdapterService {
   constructor(
     @Inject(TASK_STORE_PLUGIN)
     private readonly taskStore: TaskStorePlugin,
-    private readonly executionLogService: ExecutionLogService,
+    @Inject(EXECUTION_LOG_STORE_PLUGIN)
+    private readonly executionLogStore: ExecutionLogStorePlugin,
     private readonly taskSource: MeegleTaskSourcePlugin,
     private readonly browserLauncher: BrowserLauncherService,
     private readonly settingsService: SettingsService,
     @Optional()
-    private readonly eventsService?: EventsService
+    @Inject(EVENT_BUS_PLUGIN)
+    private readonly eventBus?: EventBusPlugin
   ) {}
 
   async sync(): Promise<SyncResult> {
@@ -65,14 +71,14 @@ export class AdapterService {
   async beginLogin() {
     const login = await this.taskSource.beginLogin();
     const verificationUri = login.verificationUriComplete || login.verificationUri;
-    const openedViaSse = Boolean(this.eventsService?.hasSubscribers());
+    const openedViaSse = Boolean(this.eventBus?.hasSubscribers());
     await this.settingsService.setMeegleLoginState({
       browserPending: true,
       verificationUri,
       userCode: login.userCode
     });
     if (openedViaSse) {
-      this.eventsService?.publishMeegleLoginRequired(verificationUri, login.userCode);
+      this.eventBus?.publishMeegleLoginRequired(verificationUri, login.userCode);
     } else {
       await this.browserLauncher.open(verificationUri);
     }
@@ -184,7 +190,7 @@ export class AdapterService {
     };
   }
 
-  private getExecutionKey(task: Pick<Task, "repo" | "branch" | "instruction">): string {
+  private getExecutionKey(task: Pick<TaskRecord, "repo" | "branch" | "instruction">): string {
     return JSON.stringify({
       repo: task.repo,
       branch: task.branch,
@@ -192,15 +198,15 @@ export class AdapterService {
     });
   }
 
-  private clearRuntimeFields(task: Task): void {
+  private clearRuntimeFields(task: TaskRecord): void {
     task.agentId = null;
     task.claimedAt = null;
     task.startedAt = null;
     task.completedAt = null;
   }
 
-  private async appendInvalidLog(task: Task): Promise<void> {
-    await this.executionLogService.append({
+  private async appendInvalidLog(task: TaskRecord): Promise<void> {
+    await this.executionLogStore.append({
       taskId: task.id,
       agentId: task.agentId,
       status: "failed",
@@ -214,8 +220,8 @@ export class AdapterService {
     });
   }
 
-  private publishTask(task: Task): void {
-    this.eventsService?.publishTaskLifecycle(task.id, task.status, task.agentId);
+  private publishTask(task: TaskRecord): void {
+    this.eventBus?.publishTaskLifecycle(task.id, task.status, task.agentId);
   }
 
   private async runSync(): Promise<SyncResult> {

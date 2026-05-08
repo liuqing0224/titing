@@ -3,18 +3,20 @@ import path from "node:path";
 import { Injectable, Logger, Optional } from "@nestjs/common";
 import { Inject } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { Agent } from "../../../packages/core/src/agents/agent.entity";
-import { ExecutionLogService } from "../../../packages/core/src/execution-logs/execution-log.service";
-import { AgentRuntimePlugin, ProcessRunOptions } from "../../../packages/core/src/plugins/agent-runtime.plugin";
 import {
+  AgentRecord,
+  AgentRuntimePlugin,
   ExecutionContext,
   ExecutionEnginePlugin,
   ExecutionRunResult,
-  ExecutionRunStage
-} from "../../../packages/core/src/plugins/execution-engine.plugin";
-import { AGENT_RUNTIME_PLUGIN } from "../../../packages/core/src/plugins/plugin.tokens";
-import { resolveExecutionBranch } from "../../../packages/core/src/tasks/task-branch";
-import { Task } from "../../../packages/core/src/tasks/task.entity";
+  ExecutionRunStage,
+  EXECUTION_LOG_STORE_PLUGIN,
+  ExecutionLogStorePlugin,
+  ProcessRunOptions,
+  TaskRecord,
+  AGENT_RUNTIME_PLUGIN,
+  resolveExecutionBranch
+} from "@autodev-agent/plugin-api";
 
 export type CursorRunStage = ExecutionRunStage;
 
@@ -47,7 +49,8 @@ export class CursorRunner implements ExecutionEnginePlugin {
     @Inject(AGENT_RUNTIME_PLUGIN)
     private readonly runtime?: AgentRuntimePlugin,
     @Optional()
-    private readonly executionLogService?: ExecutionLogService
+    @Inject(EXECUTION_LOG_STORE_PLUGIN)
+    private readonly executionLogStore?: ExecutionLogStorePlugin
   ) {}
 
   private resolveWorkspaceRoot(): string {
@@ -58,7 +61,7 @@ export class CursorRunner implements ExecutionEnginePlugin {
     return this.configService.get<string>("CODEX_WORKDIR", process.cwd());
   }
 
-  getExecutionContext(task: Task): CursorExecutionContext {
+  getExecutionContext(task: TaskRecord): CursorExecutionContext {
     const workspaceRoot = this.resolveWorkspaceRoot();
     const repoTarget = this.resolveRepoTarget(task, workspaceRoot);
 
@@ -74,7 +77,7 @@ export class CursorRunner implements ExecutionEnginePlugin {
     };
   }
 
-  async run(task: Task, agent: Agent): Promise<CursorRunResult> {
+  async run(task: TaskRecord, agent: AgentRecord): Promise<CursorRunResult> {
     const cliBin = this.configService.get<string>("CURSOR_CLI_BIN", "agent");
     const timeout = Number(this.configService.get<string>("CURSOR_TIMEOUT_MS", "1800000"));
     const workspaceRoot = this.resolveWorkspaceRoot();
@@ -252,12 +255,12 @@ export class CursorRunner implements ExecutionEnginePlugin {
     }
   }
 
-  runTask(task: Task, agent: Agent): Promise<CursorRunResult> {
+  runTask(task: TaskRecord, agent: AgentRecord): Promise<CursorRunResult> {
     return this.run(task, agent);
   }
 
   private resolveRepoTarget(
-    task: Task,
+    task: TaskRecord,
     workspaceRoot: string
   ): {
     repo: string;
@@ -301,8 +304,8 @@ export class CursorRunner implements ExecutionEnginePlugin {
   }
 
   private async prepareWorktreeWorkspace(
-    task: Task,
-    agent: Agent,
+    task: TaskRecord,
+    agent: AgentRecord,
     repoTarget: CursorExecutionContext,
     workspaceRoot: string,
     timeout: number
@@ -352,7 +355,7 @@ export class CursorRunner implements ExecutionEnginePlugin {
   }
 
   private async runRuntimeCommand(
-    agent: Agent,
+    agent: AgentRecord,
     runtimeCwd: string,
     command: string,
     args: string[],
@@ -426,11 +429,11 @@ export class CursorRunner implements ExecutionEnginePlugin {
       metadata?: Record<string, unknown>;
     }
   ): Promise<void> {
-    if (!this.executionLogService) {
+    if (!this.executionLogStore) {
       return;
     }
 
-    await this.executionLogService.append({
+    await this.executionLogStore.append({
       taskId,
       agentId,
       status,
@@ -464,7 +467,7 @@ export class CursorRunner implements ExecutionEnginePlugin {
     });
   }
 
-  private buildWorkflowNodes(task: Task, executionContext: CursorExecutionContext): WorkflowNode[] {
+  private buildWorkflowNodes(task: TaskRecord, executionContext: CursorExecutionContext): WorkflowNode[] {
     const { workflowPromptsContent, resolvedWorkflowPromptsPath } = this.loadWorkflowDefinitions(
       executionContext.worktreePath
     );
@@ -596,7 +599,7 @@ export class CursorRunner implements ExecutionEnginePlugin {
   }
 
   private buildWorkflowVariables(
-    task: Task,
+    task: TaskRecord,
     executionContext: CursorExecutionContext
   ): Record<string, string> {
     const projectName = path.posix.basename(executionContext.repoRoot);
@@ -764,7 +767,7 @@ export class CursorRunner implements ExecutionEnginePlugin {
   }
 
   private async ensureWorkflowPromptsExists(
-    agent: Agent,
+    agent: AgentRecord,
     executionContext: CursorExecutionContext,
     timeout: number
   ): Promise<void> {

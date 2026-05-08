@@ -2,10 +2,13 @@ import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Inject, Injectable, Optional } from "@nestjs/common";
-import { ExecutionLogStorePlugin, AppendExecutionLogInput } from "../../../packages/core/src/plugins/execution-log-store.plugin";
-import { EVENT_BUS_PLUGIN } from "../../../packages/core/src/plugins/plugin.tokens";
-import { EventBusPlugin } from "../../../packages/core/src/plugins/event-bus.plugin";
-import { ExecutionLog } from "../../../packages/core/src/execution-logs/execution-log.entity";
+import {
+  AppendExecutionLogInput,
+  EVENT_BUS_PLUGIN,
+  EventBusPlugin,
+  ExecutionLogRecord,
+  ExecutionLogStorePlugin
+} from "@autodev-agent/plugin-api";
 
 @Injectable()
 export class FileExecutionLogStoreService implements ExecutionLogStorePlugin {
@@ -17,8 +20,8 @@ export class FileExecutionLogStoreService implements ExecutionLogStorePlugin {
     private readonly eventBus?: EventBusPlugin
   ) {}
 
-  async append(input: AppendExecutionLogInput): Promise<ExecutionLog> {
-    const log: ExecutionLog = {
+  async append(input: AppendExecutionLogInput): Promise<ExecutionLogRecord> {
+    const log: ExecutionLogRecord = {
       id: `log-${randomUUID()}`,
       taskId: input.taskId,
       agentId: input.agentId ?? null,
@@ -34,7 +37,7 @@ export class FileExecutionLogStoreService implements ExecutionLogStorePlugin {
     return log;
   }
 
-  async listByTask(taskId: string): Promise<ExecutionLog[]> {
+  async listByTask(taskId: string): Promise<ExecutionLogRecord[]> {
     try {
       const content = await readFile(this.getTaskLogPath(taskId), "utf8");
       return content
@@ -55,8 +58,8 @@ export class FileExecutionLogStoreService implements ExecutionLogStorePlugin {
     return join(this.logDirectory, `${encodeURIComponent(taskId)}.jsonl`);
   }
 
-  private parseExecutionLog(line: string): ExecutionLog {
-    const parsed = JSON.parse(line) as Omit<ExecutionLog, "createdAt"> & { createdAt: string };
+  private parseExecutionLog(line: string): ExecutionLogRecord {
+    const parsed = JSON.parse(line) as Omit<ExecutionLogRecord, "createdAt"> & { createdAt: string };
     return {
       ...parsed,
       createdAt: new Date(parsed.createdAt)

@@ -1,4 +1,4 @@
-import { ServerPluginManifest } from "../../../packages/core/src/plugins/plugin.manifest";
+import { ServerPluginManifest } from "@autodev-agent/plugin-api";
 import { FileExecutionLogStoreService } from "./file-execution-log-store.service";
 import { FileLogStoreModule } from "./file-log-store.module";
 

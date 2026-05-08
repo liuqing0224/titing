@@ -1,7 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { SETTINGS_STORE_PLUGIN } from "../../../packages/core/src/plugins/plugin.tokens";
-import { SettingsStorePlugin } from "../../../packages/core/src/plugins/settings-store.plugin";
+import { SETTINGS_STORE_PLUGIN, SettingsStorePlugin } from "@autodev-agent/plugin-api";
 
 export type MeegleSyncSettings = {
   enabled: boolean;

@@ -1,7 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { TASK_STORE_PLUGIN } from "../../../packages/core/src/plugins/plugin.tokens";
-import { TaskStorePlugin } from "../../../packages/core/src/plugins/task-store.plugin";
-import { Task, TaskStatus } from "../../../packages/core/src/tasks/task.entity";
+import { TASK_STORE_PLUGIN, TaskStatus, TaskStorePlugin } from "@autodev-agent/plugin-api";
 
 export type DashboardStats = Record<"total" | TaskStatus, number>;
 

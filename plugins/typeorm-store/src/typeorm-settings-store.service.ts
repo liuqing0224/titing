@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
-import { SettingsStorePlugin } from "../../../packages/core/src/plugins/settings-store.plugin";
+import { SettingsStorePlugin } from "@autodev-agent/plugin-api";
 import { StoredSetting } from "./stored-setting.entity";
 
 @Injectable()

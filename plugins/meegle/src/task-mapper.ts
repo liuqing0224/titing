@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Task, TaskPriority, TaskType } from "../../../packages/core/src/tasks/task.entity";
-import { normalizeStoredBranch } from "../../../packages/core/src/tasks/task-branch";
+import { TaskPriority, TaskRecord, TaskType, normalizeStoredBranch } from "@autodev-agent/plugin-api";
 
 export type RawMeegleTask = {
   id: string;
@@ -13,7 +12,7 @@ export type RawMeegleTask = {
   projectKey?: string | null;
 };
 
-export function mapRawTaskToTaskInput(raw: RawMeegleTask): Partial<Task> {
+export function mapRawTaskToTaskInput(raw: RawMeegleTask): Partial<TaskRecord> {
   return {
     id: `auto-${randomUUID()}`,
     source: "meegle",

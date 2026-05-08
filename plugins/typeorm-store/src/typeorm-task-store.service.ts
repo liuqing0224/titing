@@ -1,8 +1,8 @@
 import { Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
-import { ListTasksQuery, TaskStorePlugin } from "../../../packages/core/src/plugins/task-store.plugin";
-import { Task } from "../../../packages/core/src/tasks/task.entity";
+import { Task } from "@autodev-agent/core";
+import { ListTasksQuery, TaskStorePlugin } from "@autodev-agent/plugin-api";
 
 @Injectable()
 export class TypeOrmTaskStoreService implements TaskStorePlugin {

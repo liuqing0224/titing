@@ -1,11 +1,11 @@
 import { Inject, Injectable } from "@nestjs/common";
 import {
   AgentStatusEvent,
-  EventBusPlugin,
   ExecutionLogEvent,
   MeegleLoginRequiredEvent,
   TaskLifecycleEvent
-} from "../plugins/event-bus.plugin";
+} from "@autodev-agent/plugin-api";
+import { EventBusPlugin } from "../plugins/event-bus.plugin";
 import { EVENT_BUS_PLUGIN } from "../plugins/plugin.tokens";
 
 @Injectable()

@@ -6,14 +6,10 @@ import {
   PrimaryColumn,
   UpdateDateColumn
 } from "typeorm";
-
-export type TaskSource = "meegle" | "manual";
-export type TaskType = "feature" | "bug" | "chore" | "docs";
-export type TaskPriority = "low" | "medium" | "high";
-export type TaskStatus = "pending" | "queued" | "running" | "done" | "failed";
+import { TaskPriority, TaskRecord, TaskSource, TaskStatus, TaskType } from "@autodev-agent/plugin-api";
 
 @Entity({ name: "tasks" })
-export class Task {
+export class Task implements TaskRecord {
   @PrimaryColumn({ type: "varchar" })
   id: string;
 

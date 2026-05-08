@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { normalizeStoredBranch } from "../../../packages/core/src/tasks/task-branch";
+import { normalizeStoredBranch } from "@autodev-agent/plugin-api";
 import { RawMeegleTask } from "./task-mapper";
 
 const execFileAsync = promisify(execFile);

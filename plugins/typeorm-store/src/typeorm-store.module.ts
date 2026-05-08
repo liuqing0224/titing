@@ -1,10 +1,12 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
-import { Agent } from "../../../packages/core/src/agents/agent.entity";
-import { TaskLifecycle1714406400001 } from "../../../packages/core/src/database/migrations/1714406400001-task-lifecycle";
-import { SystemSettings1714492800002 } from "../../../packages/core/src/database/migrations/1714492800002-system-settings";
-import { Task } from "../../../packages/core/src/tasks/task.entity";
+import {
+  Agent,
+  SystemSettings1714492800002,
+  Task,
+  TaskLifecycle1714406400001
+} from "@autodev-agent/core";
 import { StoredSetting } from "./stored-setting.entity";
 import { TypeOrmAgentStoreService } from "./typeorm-agent-store.service";
 import { TypeOrmSettingsStoreService } from "./typeorm-settings-store.service";

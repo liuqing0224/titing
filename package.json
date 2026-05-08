@@ -2,6 +2,7 @@
   "name": "autodev-agent",
   "private": true,
   "workspaces": [
+    "packages/*",
     "apps/server",
     "apps/web"
   ],

@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { AuthenticatedTaskSourcePlugin } from "../../../packages/core/src/plugins/task-source.plugin";
+import { AuthenticatedTaskSourcePlugin } from "@autodev-agent/plugin-api";
 import {
   MeegleAdapter,
   MeegleAuthStatus,

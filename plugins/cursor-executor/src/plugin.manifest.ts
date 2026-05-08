@@ -1,4 +1,4 @@
-import { ServerPluginManifest } from "../../../packages/core/src/plugins/plugin.manifest";
+import { ServerPluginManifest } from "@autodev-agent/plugin-api";
 import { CursorExecutorModule } from "./cursor-executor.module";
 import { CursorRunner } from "./cursor-runner";
 

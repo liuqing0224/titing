@@ -1,4 +1,4 @@
-import { ServerPluginManifest } from "../../../packages/core/src/plugins/plugin.manifest";
+import { ServerPluginManifest } from "@autodev-agent/plugin-api";
 import { TypeOrmStoreModule } from "./typeorm-store.module";
 import { TypeOrmAgentStoreService } from "./typeorm-agent-store.service";
 import { TypeOrmSettingsStoreService } from "./typeorm-settings-store.service";

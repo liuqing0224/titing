@@ -1,10 +1,11 @@
 import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { ListTasksQuery, TaskPriority, TaskStatus } from "@autodev-agent/plugin-api";
 import { EventsService } from "../events/events.service";
 import { ExecutionLogService } from "../execution-logs/execution-log.service";
 import { TASK_STORE_PLUGIN } from "../plugins/plugin.tokens";
-import { ListTasksQuery, TaskStorePlugin } from "../plugins/task-store.plugin";
+import { TaskStorePlugin } from "../plugins/task-store.plugin";
 import { normalizeStoredBranch, resolveExecutionBranch } from "./task-branch";
-import { Task, TaskPriority, TaskStatus } from "./task.entity";
+import { Task } from "./task.entity";
 import { hasValidExecutionFields, TERMINAL_TASK_STATUSES } from "./task-status";
 
 export type UpdateExecutionFieldsInput = {

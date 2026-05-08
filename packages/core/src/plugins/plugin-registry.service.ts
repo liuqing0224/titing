@@ -1,6 +1,6 @@
 import { Inject, Injectable, Optional } from "@nestjs/common";
+import { ServerPluginManifest } from "@autodev-agent/plugin-api";
 import { APP_PLUGIN_MANIFESTS } from "./plugin.tokens";
-import { ServerPluginManifest } from "./plugin.manifest";
 
 @Injectable()
 export class PluginRegistryService {

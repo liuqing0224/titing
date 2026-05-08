@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { ServerPluginManifest } from "../../../packages/core/src/plugins/plugin.manifest";
+import { ServerPluginManifest } from "@autodev-agent/plugin-api";
 
 function isServerPluginManifest(value: unknown): value is ServerPluginManifest {
   return typeof value === "object" && value !== null && "id" in value && "kind" in value;

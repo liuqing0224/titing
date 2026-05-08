@@ -5,11 +5,10 @@ import {
   PrimaryColumn,
   UpdateDateColumn
 } from "typeorm";
-
-export type AgentStatus = "idle" | "running" | "offline";
+import { AgentRecord, AgentStatus } from "@autodev-agent/plugin-api";
 
 @Entity({ name: "agents" })
-export class Agent {
+export class Agent implements AgentRecord {
   @PrimaryColumn({ type: "varchar" })
   id: string;
 

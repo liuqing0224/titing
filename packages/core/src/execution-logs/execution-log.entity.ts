@@ -1,4 +1,6 @@
-export class ExecutionLog {
+import { ExecutionLogRecord } from "@autodev-agent/plugin-api";
+
+export class ExecutionLog implements ExecutionLogRecord {
   id: string;
 
   taskId: string;

@@ -6,7 +6,7 @@ import {
   ExecutionLogEvent,
   MeegleLoginRequiredEvent,
   TaskLifecycleEvent
-} from "../../../packages/core/src/plugins/event-bus.plugin";
+} from "@autodev-agent/plugin-api";
 
 @Injectable()
 export class SseEventBusService implements EventBusPlugin {

@@ -1,24 +1,24 @@
 import { spawn } from "node:child_process";
 import { Injectable } from "@nestjs/common";
 import {
+  AgentRecord,
   AgentRuntimePlugin,
   RuntimeCommand,
   RuntimeCommandResult
-} from "../../../packages/core/src/plugins/agent-runtime.plugin";
-import { Agent } from "../../../packages/core/src/agents/agent.entity";
+} from "@autodev-agent/plugin-api";
 
 @Injectable()
 export class LocalAgentRuntimeService implements AgentRuntimePlugin {
   readonly runtime = "local";
 
-  async ensureRuntime(agent: Agent): Promise<{ containerId: string; running: boolean }> {
+  async ensureRuntime(agent: AgentRecord): Promise<{ containerId: string; running: boolean }> {
     return {
       containerId: `local:${agent.id}`,
       running: true
     };
   }
 
-  async runCommand(_agent: Agent, command: RuntimeCommand): Promise<RuntimeCommandResult> {
+  async runCommand(_agent: AgentRecord, command: RuntimeCommand): Promise<RuntimeCommandResult> {
     const { stdout, stderr } = await this.execute(command);
     return { stdout, stderr };
   }
