@@ -1,15 +1,10 @@
 {
-  "name": "@autodev-agent/core",
+  "name": "@titing/core",
   "private": true,
   "version": "0.1.0",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
-    "@autodev-agent/plugin-api": "0.1.0",
-    "@nestjs/common": "^11.1.19",
-    "@nestjs/config": "^4.0.4",
-    "@nestjs/schedule": "^6.1.3",
-    "@nestjs/typeorm": "^11.0.1",
-    "typeorm": "^0.3.28"
+    "@titing/plugin-api": "0.1.0"
   }
 }

@@ -9,10 +9,13 @@
     "types": ["node", "jest"]
   },
   "include": [
-    "src/**/*.ts",
-    "../../packages/core/src/**/*.ts",
-    "../../packages/plugin-api/src/**/*.ts",
-    "../../plugins/*/src/**/*.ts"
+    "src/main.ts",
+    "src/run-migrations.ts",
+    "src/titing/**/*.ts",
+    "../../packages/core/src/index.ts",
+    "../../packages/core/src/titing/**/*.ts",
+    "../../packages/plugin-api/src/index.ts",
+    "../../packages/plugin-api/src/titing/**/*.ts"
   ],
   "exclude": [
     "node_modules",
@@ -20,9 +23,6 @@
     "test",
     "**/*.spec.ts",
     "../../packages/core/src/**/*.spec.ts",
-    "../../packages/plugin-api/src/**/*.spec.ts",
-    "../../plugins/*/src/**/*.spec.ts",
-    "../../plugins/**/web/**/*.ts",
-    "../../plugins/**/web/**/*.tsx"
+    "../../packages/plugin-api/src/**/*.spec.ts"
   ]
 }
