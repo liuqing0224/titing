@@ -93,9 +93,81 @@ export type PreparedWorkspace = {
   env: Record<string, string>;
 };
 
+export type EnvironmentRuntimeEvent =
+  | {
+      type: "command_start";
+      stage: string;
+      command: string[];
+      cwd: string;
+      occurredAt: string;
+    }
+  | {
+      type: "spawn";
+      stage: string;
+      command: string[];
+      cwd: string;
+      pid?: number;
+      occurredAt: string;
+    }
+  | {
+      type: "stdout" | "stderr";
+      stage: string;
+      command: string[];
+      cwd: string;
+      bytes: number;
+      chunk: string;
+      occurredAt: string;
+    }
+  | {
+      type: "timeout";
+      stage: string;
+      command: string[];
+      cwd: string;
+      signal: string;
+      timeoutMs: number;
+      occurredAt: string;
+    }
+  | {
+      type: "error";
+      stage: string;
+      command: string[];
+      cwd: string;
+      error: string;
+      occurredAt: string;
+    }
+  | {
+      type: "close";
+      stage: string;
+      command: string[];
+      cwd: string;
+      exitCode: number | null;
+      stdoutBytes: number;
+      stderrBytes: number;
+      timedOut: boolean;
+      occurredAt: string;
+    }
+  | {
+      type: "result";
+      stage: string;
+      command: string[];
+      cwd: string;
+      exitCode: number;
+      timedOut: boolean;
+      summary: string;
+      stdoutLength: number;
+      stderrLength: number;
+      occurredAt: string;
+    };
+
+export type EnvironmentRuntimeLogger = (event: EnvironmentRuntimeEvent) => Promise<void>;
+
+export type EnvironmentContext = {
+  runtimeLogger?: EnvironmentRuntimeLogger;
+};
+
 export interface EnvironmentPlugin extends RuntimePlugin {
   kind: "environment";
-  prepareWorkspace(task: TitingTask): Promise<PreparedWorkspace>;
+  prepareWorkspace(task: TitingTask, context?: EnvironmentContext): Promise<PreparedWorkspace>;
   cleanupWorkspace(task: TitingTask, workspace: PreparedWorkspace): Promise<void>;
 }
 
@@ -111,14 +183,106 @@ export type ExecutionResult = {
   metadata: Record<string, unknown>;
 };
 
+export type ExecutionRuntimeEvent =
+  | {
+      type: "command_start";
+      command: string[];
+      cwd: string;
+      outputPath?: string;
+      nativeSessionId?: string | null;
+      occurredAt: string;
+    }
+  | {
+      type: "spawn";
+      command: string[];
+      cwd: string;
+      pid?: number;
+      nativeSessionId?: string | null;
+      occurredAt: string;
+    }
+  | {
+      type: "stdout" | "stderr";
+      command: string[];
+      cwd: string;
+      bytes: number;
+      chunk: string;
+      nativeSessionId?: string | null;
+      occurredAt: string;
+    }
+  | {
+      type: "timeout";
+      command: string[];
+      cwd: string;
+      signal: string;
+      timeoutMs: number;
+      nativeSessionId?: string | null;
+      occurredAt: string;
+    }
+  | {
+      type: "error";
+      command: string[];
+      cwd: string;
+      error: string;
+      nativeSessionId?: string | null;
+      occurredAt: string;
+    }
+  | {
+      type: "close";
+      command: string[];
+      cwd: string;
+      exitCode: number | null;
+      stdoutBytes: number;
+      stderrBytes: number;
+      timedOut: boolean;
+      nativeSessionId?: string | null;
+      occurredAt: string;
+    }
+  | {
+      type: "result";
+      command: string[];
+      cwd: string;
+      exitCode: number;
+      timedOut: boolean;
+      errorCategory: string;
+      timeoutCategory: string;
+      stdoutLength: number;
+      stderrLength: number;
+      summary: string;
+      sessionId?: string | null;
+      nativeSessionId?: string | null;
+      occurredAt: string;
+    }
+  | {
+      type: "session_create_start" | "session_create_result";
+      command: string[];
+      cwd: string;
+      exitCode?: number;
+      stdoutLength?: number;
+      stderrLength?: number;
+      sessionId?: string | null;
+      occurredAt: string;
+    };
+
+export type ExecutionRuntimeLogger = (event: ExecutionRuntimeEvent) => Promise<void>;
+
+export type ExecutionContext = {
+  runtimeLogger?: ExecutionRuntimeLogger;
+};
+
 export interface ExecutionPlugin extends RuntimePlugin {
   kind: "execution";
-  execute(task: TitingTask, workspace: PreparedWorkspace, goal: RepairGoal | null): Promise<ExecutionResult>;
+  execute(
+    task: TitingTask,
+    workspace: PreparedWorkspace,
+    goal: RepairGoal | null,
+    context?: ExecutionContext
+  ): Promise<ExecutionResult>;
   continueSession?(
     sessionId: string,
     task: TitingTask,
     workspace: PreparedWorkspace,
-    goal: RepairGoal
+    goal: RepairGoal,
+    context?: ExecutionContext
   ): Promise<ExecutionResult>;
 }
 

@@ -2,6 +2,9 @@ import {
   AgentRecord,
   AgentRepository,
   CreateTaskInput,
+  EnvironmentContext,
+  EnvironmentRuntimeEvent,
+  ExecutionContext,
   EvalResult,
   EvalResultRepository,
   EventSink,
@@ -10,6 +13,7 @@ import {
   ExecutionLogRepository,
   ExecutionRecord,
   ExecutionRepository,
+  ExecutionRuntimeEvent,
   NeedsHumanPayload,
   ObservabilityCorrelation,
   PluginConfig,
@@ -746,7 +750,10 @@ export class TitingServices {
     await this.publish("scheduler.agent_selected", "Agent selected", currentTask, { agentId: agent.id });
 
     try {
-      workspace = await environment.prepareWorkspace(currentTask);
+      const environmentContext: EnvironmentContext = {
+        runtimeLogger: async (event) => this.recordEnvironmentRuntimeEvent(currentTask, agent.id, event)
+      };
+      workspace = await environment.prepareWorkspace(currentTask, environmentContext);
       let goal = await this.deps.repairGoals.getByTaskId(currentTask.id);
       let loopCount = goal?.currentIteration ?? 0;
       let previousResult: ExecutionResult | null = null;
@@ -756,14 +763,18 @@ export class TitingServices {
 
       while (true) {
         execution = await this.createExecution(currentTask, agent.id, workspace);
+        const activeExecution = execution;
         await this.updateExecutionStatus(execution, currentTask, "executing", "Execution started", {
           agentId: agent.id,
           iteration: loopCount + 1
         });
+        const executionContext: ExecutionContext = {
+          runtimeLogger: async (event) => this.recordExecutionRuntimeEvent(currentTask, activeExecution, agent.id, event)
+        };
 
         const result: ExecutionResult = goal && previousResult?.sessionId && executionPlugin.continueSession
-          ? await executionPlugin.continueSession(previousResult.sessionId, currentTask, workspace, goal)
-          : await executionPlugin.execute(currentTask, workspace, goal);
+          ? await executionPlugin.continueSession(previousResult.sessionId, currentTask, workspace, goal, executionContext)
+          : await executionPlugin.execute(currentTask, workspace, goal, executionContext);
         execution.summary = result.summary;
         execution.endedAt = this.now();
         await this.deps.executions.save(execution);
@@ -1175,7 +1186,8 @@ export class TitingServices {
     await this.appendExecutionLog(task, execution, "execution.preparing", "Workspace prepared for execution", {
       workspacePath: workspace.workspacePath,
       repoPath: workspace.repoPath,
-      branch: workspace.branch
+      branch: workspace.branch,
+      artifactsPath: workspace.artifactsPath
     }, this.buildCorrelation({ task, execution, agentId }));
     return execution;
   }
@@ -1276,6 +1288,83 @@ export class TitingServices {
       },
       createdAt: this.now()
     });
+  }
+
+  private async recordEnvironmentRuntimeEvent(
+    task: TitingTask,
+    agentId: string,
+    event: EnvironmentRuntimeEvent
+  ): Promise<void> {
+    await this.appendExecutionLog(
+      task,
+      null,
+      `environment.runtime.${event.type}`,
+      this.describeEnvironmentRuntimeEvent(event),
+      { runtimeEvent: event },
+      this.buildCorrelation({ task, agentId })
+    );
+  }
+
+  private describeEnvironmentRuntimeEvent(event: EnvironmentRuntimeEvent): string {
+    switch (event.type) {
+      case "command_start":
+        return `Environment stage started: ${event.stage}`;
+      case "spawn":
+        return `Environment process spawned: ${event.stage}`;
+      case "stdout":
+        return `Environment stdout chunk received: ${event.stage}`;
+      case "stderr":
+        return `Environment stderr chunk received: ${event.stage}`;
+      case "timeout":
+        return `Environment command timed out: ${event.stage}`;
+      case "error":
+        return `Environment process error: ${event.stage}`;
+      case "close":
+        return `Environment process closed: ${event.stage}`;
+      case "result":
+        return `Environment stage finished: ${event.stage}`;
+    }
+  }
+
+  private async recordExecutionRuntimeEvent(
+    task: TitingTask,
+    execution: ExecutionRecord,
+    agentId: string,
+    event: ExecutionRuntimeEvent
+  ): Promise<void> {
+    await this.appendExecutionLog(
+      task,
+      execution,
+      `execution.runtime.${event.type}`,
+      this.describeExecutionRuntimeEvent(event),
+      { runtimeEvent: event },
+      this.buildCorrelation({ task, execution, agentId })
+    );
+  }
+
+  private describeExecutionRuntimeEvent(event: ExecutionRuntimeEvent): string {
+    switch (event.type) {
+      case "command_start":
+        return "Executor command started";
+      case "spawn":
+        return "Executor process spawned";
+      case "stdout":
+        return "Executor stdout chunk received";
+      case "stderr":
+        return "Executor stderr chunk received";
+      case "timeout":
+        return "Executor command timed out";
+      case "error":
+        return "Executor process error";
+      case "close":
+        return "Executor process closed";
+      case "result":
+        return "Executor command finished";
+      case "session_create_start":
+        return "Executor session creation started";
+      case "session_create_result":
+        return "Executor session created";
+    }
   }
 
   private async updateExecutionStatus(

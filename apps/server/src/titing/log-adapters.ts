@@ -93,6 +93,12 @@ function toExecutorOutputEntries(entry: LogEntry): LogEntry[] {
   if (!entry.taskId || !entry.executionId) {
     return [];
   }
+  const runtimeEvent = entry.data.runtimeEvent && typeof entry.data.runtimeEvent === "object"
+    ? entry.data.runtimeEvent as Record<string, unknown>
+    : null;
+  const runtimeType = typeof runtimeEvent?.type === "string" ? runtimeEvent.type : null;
+  const runtimeChunk = typeof runtimeEvent?.chunk === "string" ? runtimeEvent.chunk : "";
+  const runtimeSummary = typeof runtimeEvent?.summary === "string" ? runtimeEvent.summary : "";
   const stdout = typeof entry.data.stdout === "string" ? entry.data.stdout : "";
   const stderr = typeof entry.data.stderr === "string" ? entry.data.stderr : "";
   const summary = typeof entry.data.summary === "string"
@@ -111,6 +117,33 @@ function toExecutorOutputEntries(entry: LogEntry): LogEntry[] {
     agentId: entry.agentId
   };
   const entries: LogEntry[] = [];
+  if (runtimeType === "stdout" && runtimeChunk) {
+    entries.push({
+      id: `${entry.id}:runtime-stdout`,
+      ...common,
+      channel: "executor_stdout" as const,
+      message: "Executor stdout",
+      data: { raw: runtimeChunk }
+    });
+  }
+  if (runtimeType === "stderr" && runtimeChunk) {
+    entries.push({
+      id: `${entry.id}:runtime-stderr`,
+      ...common,
+      channel: "executor_stderr" as const,
+      message: "Executor stderr",
+      data: { raw: runtimeChunk }
+    });
+  }
+  if (runtimeType === "result" && runtimeSummary) {
+    entries.push({
+      id: `${entry.id}:runtime-summary`,
+      ...common,
+      channel: "executor_summary" as const,
+      message: "Executor summary",
+      data: { raw: runtimeSummary }
+    });
+  }
   if (stdout) {
     entries.push({
       id: `${entry.id}:stdout`,

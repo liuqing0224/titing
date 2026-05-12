@@ -1,6 +1,6 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { EnvironmentPlugin, PluginHealth, PreparedWorkspace, TitingTask } from "@titing/plugin-api";
+import { EnvironmentContext, EnvironmentPlugin, PluginHealth, PreparedWorkspace, TitingTask } from "@titing/plugin-api";
 import { ServerConfig } from "../config";
 import {
   EnvironmentPreparationError,
@@ -34,7 +34,7 @@ export class LocalWorktreeEnvironmentPlugin implements EnvironmentPlugin {
    * Workspace pipeline: mkdir layout → clone-or-fetch mirror → remove stale worktree → resolve branch ref →
    * `worktree add` + checkout → install deps if `package.json` exists → write `artifacts/workspace.json`.
    */
-  async prepareWorkspace(task: TitingTask): Promise<PreparedWorkspace> {
+  async prepareWorkspace(task: TitingTask, context?: EnvironmentContext): Promise<PreparedWorkspace> {
     const workspacePath = resolve(this.config.workspace.root, `${task.id}-${task.executor}`);
     const repoPath = join(workspacePath, "repo");
     const artifactsPath = join(workspacePath, "artifacts");
@@ -46,10 +46,18 @@ export class LocalWorktreeEnvironmentPlugin implements EnvironmentPlugin {
     await mkdir(artifactsPath, { recursive: true });
 
     if (await pathExists(cachePath)) {
-      await this.removeRegisteredWorktree(cachePath, repoPath);
+      await this.removeRegisteredWorktree(cachePath, repoPath, context);
     }
     if (!(await pathExists(cachePath))) {
-      await runCheckedCommand("git", ["clone", "--mirror", task.repo, cachePath], this.config.workspace.root, process.env, this.config.goalRecovery.executionTimeoutMs, "clone");
+      await runCheckedCommand(
+        "git",
+        ["clone", "--mirror", task.repo, cachePath],
+        this.config.workspace.root,
+        process.env,
+        this.config.goalRecovery.executionTimeoutMs,
+        "clone",
+        context?.runtimeLogger
+      );
     } else {
       await runCheckedCommand(
         "git",
@@ -65,7 +73,8 @@ export class LocalWorktreeEnvironmentPlugin implements EnvironmentPlugin {
         this.config.workspace.root,
         process.env,
         this.config.goalRecovery.executionTimeoutMs,
-        "fetch"
+        "fetch",
+        context?.runtimeLogger
       );
     }
 
@@ -77,7 +86,8 @@ export class LocalWorktreeEnvironmentPlugin implements EnvironmentPlugin {
       this.config.workspace.root,
       process.env,
       this.config.goalRecovery.executionTimeoutMs,
-      "worktree"
+      "worktree",
+      context?.runtimeLogger
     );
     await runCheckedCommand(
       "git",
@@ -85,10 +95,11 @@ export class LocalWorktreeEnvironmentPlugin implements EnvironmentPlugin {
       this.config.workspace.root,
       process.env,
       this.config.goalRecovery.executionTimeoutMs,
-      "checkout"
+      "checkout",
+      context?.runtimeLogger
     );
 
-    await installDependenciesIfNeeded(repoPath, env, this.config.goalRecovery.executionTimeoutMs);
+    await installDependenciesIfNeeded(repoPath, env, this.config.goalRecovery.executionTimeoutMs, context?.runtimeLogger);
     await writeFile(join(artifactsPath, "workspace.json"), JSON.stringify({
       taskId: task.id,
       repo: task.repo,
@@ -123,7 +134,11 @@ export class LocalWorktreeEnvironmentPlugin implements EnvironmentPlugin {
     }
   }
 
-  private async removeRegisteredWorktree(cachePath: string, repoPath: string): Promise<void> {
+  private async removeRegisteredWorktree(
+    cachePath: string,
+    repoPath: string,
+    context?: EnvironmentContext
+  ): Promise<void> {
     try {
       await runCheckedCommand(
         "git",
@@ -131,7 +146,8 @@ export class LocalWorktreeEnvironmentPlugin implements EnvironmentPlugin {
         this.config.workspace.root,
         process.env,
         this.config.goalRecovery.executionTimeoutMs,
-        "cleanup"
+        "cleanup",
+        context?.runtimeLogger
       );
     } catch (error) {
       if (!(error instanceof EnvironmentPreparationError) || error.stage !== "cleanup") {

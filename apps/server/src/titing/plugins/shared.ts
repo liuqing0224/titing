@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, readFile } from "node:fs/promises";
+import { access, appendFile, readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import {
+  EnvironmentRuntimeEvent,
   EvalResult,
   ExecutionResult,
   GovernanceRecord,
@@ -24,6 +25,40 @@ export type CommandResult = {
   summary: string;
   timedOut: boolean;
 };
+
+export type CommandLifecycleEvent =
+  | {
+      type: "spawn";
+      pid: number | undefined;
+      command: string[];
+      cwd: string;
+      occurredAt: string;
+    }
+  | {
+      type: "stdout" | "stderr";
+      bytes: number;
+      chunk: string;
+      occurredAt: string;
+    }
+  | {
+      type: "timeout";
+      signal: NodeJS.Signals;
+      timeoutMs: number;
+      occurredAt: string;
+    }
+  | {
+      type: "error";
+      error: string;
+      occurredAt: string;
+    }
+  | {
+      type: "close";
+      exitCode: number | null;
+      stdoutBytes: number;
+      stderrBytes: number;
+      timedOut: boolean;
+      occurredAt: string;
+    };
 
 /** Limits applied by governance (command allow/block, prompt/output size, diff caps). */
 export type GovernancePolicy = {
@@ -63,18 +98,34 @@ export function runCommand(
   args: string[],
   cwd: string,
   timeoutMs: number,
-  envOverrides: Record<string, string> = {}
+  envOverrides: Record<string, string> = {},
+  onEvent?: (event: CommandLifecycleEvent) => void
 ): Promise<CommandResult> {
   return new Promise((resolveResult) => {
     const child = spawn(bin, args, { cwd, env: { ...process.env, ...envOverrides } });
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let timedOut = false;
+    onEvent?.({
+      type: "spawn",
+      pid: child.pid,
+      command: [bin, ...args],
+      cwd,
+      occurredAt: new Date().toISOString()
+    });
     const timeout = setTimeout(() => {
       if (settled) {
         return;
       }
       settled = true;
+      timedOut = true;
+      onEvent?.({
+        type: "timeout",
+        signal: "SIGTERM",
+        timeoutMs,
+        occurredAt: new Date().toISOString()
+      });
       child.kill("SIGTERM");
       resolveResult({
         exitCode: 124,
@@ -86,10 +137,24 @@ export function runCommand(
     }, timeoutMs);
 
     child.stdout.on("data", (chunk) => {
-      stdout += String(chunk);
+      const text = String(chunk);
+      stdout += text;
+      onEvent?.({
+        type: "stdout",
+        bytes: Buffer.byteLength(text),
+        chunk: text,
+        occurredAt: new Date().toISOString()
+      });
     });
     child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
+      const text = String(chunk);
+      stderr += text;
+      onEvent?.({
+        type: "stderr",
+        bytes: Buffer.byteLength(text),
+        chunk: text,
+        occurredAt: new Date().toISOString()
+      });
     });
     child.on("error", (error) => {
       if (settled) {
@@ -97,6 +162,11 @@ export function runCommand(
       }
       settled = true;
       clearTimeout(timeout);
+      onEvent?.({
+        type: "error",
+        error: error.message,
+        occurredAt: new Date().toISOString()
+      });
       resolveResult({
         exitCode: 127,
         stdout,
@@ -111,6 +181,14 @@ export function runCommand(
       }
       settled = true;
       clearTimeout(timeout);
+      onEvent?.({
+        type: "close",
+        exitCode,
+        stdoutBytes: Buffer.byteLength(stdout),
+        stderrBytes: Buffer.byteLength(stderr),
+        timedOut,
+        occurredAt: new Date().toISOString()
+      });
       resolveResult({
         exitCode: exitCode ?? 1,
         stdout,
@@ -129,9 +207,33 @@ export async function runCheckedCommand(
   cwd: string,
   envOverrides: NodeJS.ProcessEnv,
   timeoutMs: number,
-  stage: string
+  stage: string,
+  onEvent?: (event: EnvironmentRuntimeEvent) => Promise<void> | void
 ): Promise<void> {
-  const result = await runCommand(bin, args, cwd, timeoutMs, stringifyEnv(envOverrides));
+  const command = [bin, ...args];
+  const startedAt = new Date().toISOString();
+  await onEvent?.({
+    type: "command_start",
+    stage,
+    command,
+    cwd,
+    occurredAt: startedAt
+  });
+  const result = await runCommand(bin, args, cwd, timeoutMs, stringifyEnv(envOverrides), (event) => {
+    void onEvent?.(mapEnvironmentRuntimeEvent(stage, command, cwd, event));
+  });
+  await onEvent?.({
+    type: "result",
+    stage,
+    command,
+    cwd,
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    summary: result.summary,
+    stdoutLength: result.stdout.length,
+    stderrLength: result.stderr.length,
+    occurredAt: new Date().toISOString()
+  });
   if (result.exitCode !== 0) {
     throw new EnvironmentPreparationError(
       stage,
@@ -139,6 +241,37 @@ export async function runCheckedCommand(
       result.stderr || result.stdout,
       isRetryableEnvironmentStage(stage)
     );
+  }
+}
+
+function mapEnvironmentRuntimeEvent(
+  stage: string,
+  command: string[],
+  cwd: string,
+  event: CommandLifecycleEvent
+): EnvironmentRuntimeEvent {
+  switch (event.type) {
+    case "spawn":
+      return { type: "spawn", stage, command, cwd, pid: event.pid, occurredAt: event.occurredAt };
+    case "stdout":
+    case "stderr":
+      return { type: event.type, stage, command, cwd, bytes: event.bytes, chunk: event.chunk, occurredAt: event.occurredAt };
+    case "timeout":
+      return { type: "timeout", stage, command, cwd, signal: event.signal, timeoutMs: event.timeoutMs, occurredAt: event.occurredAt };
+    case "error":
+      return { type: "error", stage, command, cwd, error: event.error, occurredAt: event.occurredAt };
+    case "close":
+      return {
+        type: "close",
+        stage,
+        command,
+        cwd,
+        exitCode: event.exitCode,
+        stdoutBytes: event.stdoutBytes,
+        stderrBytes: event.stderrBytes,
+        timedOut: event.timedOut,
+        occurredAt: event.occurredAt
+      };
   }
 }
 
@@ -181,13 +314,22 @@ async function gitRefExists(cachePath: string, ref: string, timeoutMs: number): 
 export async function installDependenciesIfNeeded(
   repoPath: string,
   env: Record<string, string>,
-  timeoutMs: number
+  timeoutMs: number,
+  onEvent?: (event: EnvironmentRuntimeEvent) => Promise<void> | void
 ): Promise<void> {
   if (!(await pathExists(join(repoPath, "package.json")))) {
     return;
   }
   const installCommand = await selectInstallCommand(repoPath);
-  await runCheckedCommand(installCommand.bin, installCommand.args, repoPath, { ...process.env, ...env }, timeoutMs, "install");
+  await runCheckedCommand(
+    installCommand.bin,
+    installCommand.args,
+    repoPath,
+    { ...process.env, ...env },
+    timeoutMs,
+    "install",
+    onEvent
+  );
 }
 
 /** Prefers npm when lockfile heuristics trigger (currently always npm). */
@@ -569,6 +711,10 @@ export async function readJsonArray(path: string): Promise<Array<Record<string, 
   } catch {
     return [];
   }
+}
+
+export async function appendJsonLine(path: string, value: Record<string, unknown>): Promise<void> {
+  await appendFile(path, `${JSON.stringify(sanitizeUnknown(value))}\n`, "utf8");
 }
 
 /**

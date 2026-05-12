@@ -14,6 +14,7 @@ import {
   RootLogsPlugin
 } from "./plugins";
 import { ServerConfig } from "./config";
+import { FileExecutionLogRepository } from "./log-adapters";
 import { mapMeegleTask, normalizeRepoUrl } from "./plugins/shared";
 import { TitingTask } from "@titing/plugin-api";
 
@@ -167,6 +168,35 @@ describe("LocalWorktreeEnvironmentPlugin", () => {
 
       expect(stdout.trim()).toBe(task.branch);
       expect(readme).toContain("demo");
+    } finally {
+      await rm(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("emits runtime events for environment preparation stages", async () => {
+    const sandbox = await mkdtemp(join(tmpdir(), "titing-env-"));
+    try {
+      const sourceRepo = join(sandbox, "source");
+      await createGitRepo(sourceRepo, {
+        "README.md": "# demo\n"
+      });
+
+      const plugin = new LocalWorktreeEnvironmentPlugin(createConfig(sandbox));
+      const task = createTask(sourceRepo);
+      const runtimeEvents: Array<{ type: string; stage: string }> = [];
+
+      await plugin.prepareWorkspace(task, {
+        runtimeLogger: async (event) => {
+          runtimeEvents.push({ type: event.type, stage: event.stage });
+        }
+      });
+
+      expect(runtimeEvents).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "command_start", stage: "clone" }),
+        expect.objectContaining({ type: "result", stage: "clone" }),
+        expect.objectContaining({ type: "command_start", stage: "worktree" }),
+        expect.objectContaining({ type: "result", stage: "checkout" })
+      ]));
     } finally {
       await rm(sandbox, { recursive: true, force: true });
     }
@@ -382,7 +412,12 @@ process.exit(1);
       const plugin = new CursorExecutionPlugin(bin, 60_000);
       await mkdir(join(sandbox, "artifacts"), { recursive: true });
       const workspace = createWorkspace(sandbox, repoPath);
-      const first = await plugin.execute(createTask(repoPath), workspace, null);
+      const runtimeEvents: Array<{ type: string }> = [];
+      const first = await plugin.execute(createTask(repoPath), workspace, null, {
+        runtimeLogger: async (event) => {
+          runtimeEvents.push({ type: event.type });
+        }
+      });
       const resumed = await plugin.continueSession?.(first.sessionId ?? "", createTask(repoPath), workspace, {
         id: "goal-1",
         taskId: "task-1",
@@ -396,10 +431,24 @@ process.exit(1);
         createdAt: new Date(),
         updatedAt: new Date()
       });
+      const runtimeLog = await readFile(join(workspace.artifactsPath, "executor-runtime.jsonl"), "utf8");
 
       expect(first.sessionId).toBe("cursor:chat-123");
       expect(first.summary).toBe("cursor resumed");
+      expect(first.metadata).toEqual(expect.objectContaining({
+        runtimeLogPath: join(workspace.artifactsPath, "executor-runtime.jsonl")
+      }));
       expect(resumed?.summary).toBe("cursor resumed");
+      expect(runtimeEvents.map((item) => item.type)).toEqual(expect.arrayContaining([
+        "session_create_start",
+        "command_start",
+        "spawn",
+        "close",
+        "result"
+      ]));
+      expect(runtimeLog).toContain("\"event\":\"create_chat_start\"");
+      expect(runtimeLog).toContain("\"event\":\"spawn\"");
+      expect(runtimeLog).toContain("\"event\":\"close\"");
     } finally {
       await rm(sandbox, { recursive: true, force: true });
     }
@@ -438,15 +487,18 @@ process.exit(1);
       await mkdir(join(sandbox, "artifacts"), { recursive: true });
       const workspace = createWorkspace(sandbox, repoPath);
       const result = await plugin.execute(createTask(repoPath), workspace, null);
+      const runtimeLog = await readFile(join(workspace.artifactsPath, "executor-runtime.jsonl"), "utf8");
 
       expect(result.exitCode).toBe(0);
       expect(result.metadata).toEqual(expect.objectContaining({
+        runtimeLogPath: join(workspace.artifactsPath, "executor-runtime.jsonl"),
         workflowNodeNames: ["Implement"],
         nodeExecutions: [
           expect.objectContaining({ node: "Implement", iteration: 1, loopCount: 2 }),
           expect.objectContaining({ node: "Implement", iteration: 2, loopCount: 2 })
         ]
       }));
+      expect(runtimeLog).toContain("\"event\":\"result\"");
     } finally {
       await rm(sandbox, { recursive: true, force: true });
     }
@@ -582,6 +634,76 @@ describe("RootLogsPlugin", () => {
       expect(taskLog).toContain("\"eventType\":\"executor.completed\"");
       expect(traceLog).toContain("\"traceId\":\"trace-1\"");
       expect(executionLog).toContain("\"executionId\":\"execution-1\"");
+    } finally {
+      process.chdir(previousCwd);
+      await rm(sandbox, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("FileExecutionLogRepository", () => {
+  it("mirrors runtime stdout, stderr, and summary events into executor raw logs", async () => {
+    const sandbox = await mkdtemp(join(tmpdir(), "titing-runtime-log-"));
+    const previousCwd = process.cwd();
+    try {
+      process.chdir(sandbox);
+      const plugin = new RootLogsPlugin();
+      await plugin.init();
+      const repo = new FileExecutionLogRepository(plugin);
+
+      await repo.append({
+        id: "runtime-stdout-1",
+        taskId: "task-1",
+        executionId: "execution-1",
+        eventType: "execution.runtime.stdout",
+        message: "Executor stdout chunk received",
+        data: {
+          correlation: { traceId: "trace-1" },
+          runtimeEvent: {
+            type: "stdout",
+            chunk: "hello from stdout\n"
+          }
+        },
+        createdAt: new Date("2026-05-11T00:00:00.000Z")
+      });
+      await repo.append({
+        id: "runtime-stderr-1",
+        taskId: "task-1",
+        executionId: "execution-1",
+        eventType: "execution.runtime.stderr",
+        message: "Executor stderr chunk received",
+        data: {
+          correlation: { traceId: "trace-1" },
+          runtimeEvent: {
+            type: "stderr",
+            chunk: "warning on stderr\n"
+          }
+        },
+        createdAt: new Date("2026-05-11T00:00:01.000Z")
+      });
+      await repo.append({
+        id: "runtime-result-1",
+        taskId: "task-1",
+        executionId: "execution-1",
+        eventType: "execution.runtime.result",
+        message: "Executor command finished",
+        data: {
+          correlation: { traceId: "trace-1" },
+          runtimeEvent: {
+            type: "result",
+            summary: "final runtime summary"
+          }
+        },
+        createdAt: new Date("2026-05-11T00:00:02.000Z")
+      });
+
+      const stdoutLog = await readFile(join(sandbox, "logs", "tasks", "task-1", "executor", "execution-1-stdout.log"), "utf8");
+      const stderrLog = await readFile(join(sandbox, "logs", "tasks", "task-1", "executor", "execution-1-stderr.log"), "utf8");
+      const summaryLog = await readFile(join(sandbox, "logs", "tasks", "task-1", "executor", "execution-1-summary.log"), "utf8");
+
+      expect(stdoutLog).toContain("hello from stdout");
+      expect(stderrLog).toContain("warning on stderr");
+      expect(summaryLog).toContain("final runtime summary");
     } finally {
       process.chdir(previousCwd);
       await rm(sandbox, { recursive: true, force: true });
