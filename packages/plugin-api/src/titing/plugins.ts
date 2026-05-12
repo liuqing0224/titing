@@ -67,6 +67,15 @@ export interface RuntimePlugin {
   health(): Promise<PluginHealth>;
 }
 
+export type ExternalPluginFactoryContext<TConfig = unknown> = {
+  serverConfig: TConfig;
+  pluginKind: PluginKind;
+};
+
+export type ExternalPluginFactory<TConfig = unknown, TPlugin extends RuntimePlugin = RuntimePlugin> = (
+  context: ExternalPluginFactoryContext<TConfig>
+) => Promise<TPlugin> | TPlugin;
+
 export interface TaskIntegrationPlugin extends RuntimePlugin {
   kind: "task-integration";
   pullTasks(): Promise<TitingTask[]>;

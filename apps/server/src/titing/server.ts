@@ -26,7 +26,7 @@ import {
   PgTaskRepository,
   PgTaskTransitionRepository
 } from "./repositories";
-import { createBuiltinPlugins } from "./plugins";
+import { createResolvedPlugins } from "./external-plugins";
 
 type RouteServices = Pick<
   TitingServices,
@@ -90,7 +90,7 @@ export async function buildServer(config: ServerConfig = readConfig()) {
   const repairGoals = new PgRepairGoalRepository(database.pool);
   const evalResults = new PgEvalResultRepository(database.pool);
   const pluginConfigs: PluginConfigRepository = new PgPluginConfigRepository(database.pool);
-  const runtime = new PluginRuntime(createBuiltinPlugins(config), await pluginConfigs.list());
+  const runtime = new PluginRuntime(await createResolvedPlugins(config), await pluginConfigs.list());
   await runtime.init();
   const logPlugin = runtime.selectLogPlugin();
   const events = new FileLogEventStream(logPlugin);

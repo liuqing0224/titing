@@ -17,9 +17,15 @@ describe("readConfig", () => {
       TITING_GOAL_EXECUTION_RETRY_LIMIT: "4",
       TITING_GOAL_MAX_REPAIR_ITERATIONS: "7",
       TITING_GOAL_ENABLE_NEEDS_HUMAN_LOOP: "true",
+      TITING_PLUGIN_TASK_INTEGRATION_PACKAGE: "@demo/task-integration-plugin",
+      TITING_PLUGIN_EXECUTION_PACKAGE: "@demo/execution-plugin",
       TITING_DEFAULT_EXECUTOR: "cursor",
       TITING_PLUGIN_EXECUTION_CODEX_BIN: "codex-dev",
       TITING_PLUGIN_EXECUTION_CURSOR_BIN: "cursor-dev",
+      TITING_PLUGIN_ENVIRONMENT_PACKAGE: "@demo/environment-plugin",
+      TITING_PLUGIN_QUALITY_PACKAGE: "@demo/quality-plugin",
+      TITING_PLUGIN_OBSERVABILITY_GOVERNANCE_PACKAGE: "@demo/governance-plugin",
+      TITING_PLUGIN_LOG_PACKAGE: "@demo/log-plugin",
       TITING_PLUGIN_MEEGLE_MODE: "polling",
       TITING_PLUGIN_MEEGLE_TASKS_FILE: "./tasks.json",
       TITING_PLUGIN_MEEGLE_RESULTS_FILE: "./results.json",
@@ -53,10 +59,26 @@ describe("readConfig", () => {
         enableNeedsHumanLoop: true
       }),
       plugins: expect.objectContaining({
+        taskIntegration: {
+          packageName: "@demo/task-integration-plugin"
+        },
         execution: {
+          packageName: "@demo/execution-plugin",
           defaultExecutor: "cursor",
           codexBin: "codex-dev",
           cursorBin: "cursor-dev"
+        },
+        environment: {
+          packageName: "@demo/environment-plugin"
+        },
+        quality: {
+          packageName: "@demo/quality-plugin"
+        },
+        observabilityGovernance: {
+          packageName: "@demo/governance-plugin"
+        },
+        log: {
+          packageName: "@demo/log-plugin"
         },
         meegle: expect.objectContaining({
           mode: "polling",
@@ -104,6 +126,7 @@ describe("readConfig", () => {
     expect(config.goalRecovery.enableNeedsHumanLoop).toBe(false);
     expect(config.plugins.meegle.tasksFile).toBe("./legacy-tasks.json");
     expect(config.plugins.execution.defaultExecutor).toBe("cursor");
+    expect(config.plugins.execution.packageName).toBeNull();
     expect(config.plugins.execution.codexBin).toBe("codex-legacy");
     expect(config.plugins.execution.cursorBin).toBe("agent-legacy");
   });
@@ -118,8 +141,17 @@ describe("readConfig", () => {
     })).toThrow("Webhook Meegle mode requires TITING_PLUGIN_MEEGLE_WEBHOOK_SECRET");
 
     expect(() => readConfig({
-      TITING_DEFAULT_EXECUTOR: "claude"
-    })).toThrow("Invalid value for TITING_DEFAULT_EXECUTOR: claude");
+      TITING_DEFAULT_EXECUTOR: "   "
+    })).toThrow("TITING_DEFAULT_EXECUTOR must be a non-empty string");
+  });
+
+  it("skips built-in Meegle validation when an external task integration package is configured", () => {
+    const config = readConfig({
+      TITING_PLUGIN_TASK_INTEGRATION_PACKAGE: "@demo/task-integration-plugin",
+      TITING_PLUGIN_MEEGLE_MODE: "webhook"
+    });
+
+    expect(config.plugins.taskIntegration.packageName).toBe("@demo/task-integration-plugin");
   });
 
   it("returns defaults when no env overrides are provided", () => {

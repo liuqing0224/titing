@@ -372,7 +372,7 @@ export class MeegleTaskIntegrationPlugin implements TaskIntegrationPlugin, HttpR
     return this.config.plugins.meegle.cliBin ?? "meegle";
   }
 
-  private defaultExecutor(): "codex" | "cursor" {
+  private defaultExecutor(): string {
     return this.config.plugins.execution.defaultExecutor;
   }
 

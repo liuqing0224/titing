@@ -22,10 +22,26 @@ export type ServerConfig = {
     enableNeedsHumanLoop: boolean;
   };
   plugins: {
+    taskIntegration: {
+      packageName: string | null;
+    };
     execution: {
-      defaultExecutor: "codex" | "cursor";
+      packageName: string | null;
+      defaultExecutor: string;
       codexBin: string;
       cursorBin: string;
+    };
+    environment: {
+      packageName: string | null;
+    };
+    quality: {
+      packageName: string | null;
+    };
+    observabilityGovernance: {
+      packageName: string | null;
+    };
+    log: {
+      packageName: string | null;
     };
     meegle: {
       mode: "polling" | "webhook";
@@ -79,10 +95,26 @@ export const CONFIG_DEFAULTS = {
     enableNeedsHumanLoop: false
   },
   plugins: {
+    taskIntegration: {
+      packageName: null as string | null
+    },
     execution: {
-      defaultExecutor: "codex" as const,
+      packageName: null as string | null,
+      defaultExecutor: "codex",
       codexBin: "codex",
       cursorBin: "agent"
+    },
+    environment: {
+      packageName: null as string | null
+    },
+    quality: {
+      packageName: null as string | null
+    },
+    observabilityGovernance: {
+      packageName: null as string | null
+    },
+    log: {
+      packageName: null as string | null
     },
     meegle: {
       mode: "polling" as const,
@@ -196,11 +228,22 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       )
     },
     plugins: {
+      taskIntegration: {
+        packageName: readOptionalString(
+          env,
+          ["TITING_PLUGIN_TASK_INTEGRATION_PACKAGE"],
+          CONFIG_DEFAULTS.plugins.taskIntegration.packageName
+        )
+      },
       execution: {
-        defaultExecutor: readEnum(
+        packageName: readOptionalString(
+          env,
+          ["TITING_PLUGIN_EXECUTION_PACKAGE"],
+          CONFIG_DEFAULTS.plugins.execution.packageName
+        ),
+        defaultExecutor: readNonEmptyString(
           env,
           ["TITING_DEFAULT_EXECUTOR", "TITING_PLUGIN_EXECUTION_DEFAULT_EXECUTOR"],
-          ["codex", "cursor"],
           CONFIG_DEFAULTS.plugins.execution.defaultExecutor
         ),
         codexBin: readString(
@@ -212,6 +255,34 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
           env,
           ["TITING_PLUGIN_EXECUTION_CURSOR_BIN", "CURSOR_CLI_BIN"],
           CONFIG_DEFAULTS.plugins.execution.cursorBin
+        )
+      },
+      environment: {
+        packageName: readOptionalString(
+          env,
+          ["TITING_PLUGIN_ENVIRONMENT_PACKAGE"],
+          CONFIG_DEFAULTS.plugins.environment.packageName
+        )
+      },
+      quality: {
+        packageName: readOptionalString(
+          env,
+          ["TITING_PLUGIN_QUALITY_PACKAGE"],
+          CONFIG_DEFAULTS.plugins.quality.packageName
+        )
+      },
+      observabilityGovernance: {
+        packageName: readOptionalString(
+          env,
+          ["TITING_PLUGIN_OBSERVABILITY_GOVERNANCE_PACKAGE"],
+          CONFIG_DEFAULTS.plugins.observabilityGovernance.packageName
+        )
+      },
+      log: {
+        packageName: readOptionalString(
+          env,
+          ["TITING_PLUGIN_LOG_PACKAGE"],
+          CONFIG_DEFAULTS.plugins.log.packageName
         )
       },
       meegle: {
@@ -341,28 +412,44 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
 
 export function validateConfig(config: ServerConfig): void {
   const meegle = config.plugins.meegle;
-  if (meegle.sourceMode === "latest_sprint") {
-    if (!meegle.cliBin) {
-      throw new Error("Latest sprint Meegle mode requires MEEGLE_CLI_BIN");
+  if (!config.plugins.taskIntegration.packageName) {
+    if (meegle.sourceMode === "latest_sprint") {
+      if (!meegle.cliBin) {
+        throw new Error("Latest sprint Meegle mode requires MEEGLE_CLI_BIN");
+      }
+      if (!meegle.projectKey || !meegle.projectScopeName || !meegle.sprintTypeName || !meegle.demandTypeName || !meegle.sprintLinkField) {
+        throw new Error("Latest sprint Meegle mode requires project, sprint, demand, and link field configuration");
+      }
     }
-    if (!meegle.projectKey || !meegle.projectScopeName || !meegle.sprintTypeName || !meegle.demandTypeName || !meegle.sprintLinkField) {
-      throw new Error("Latest sprint Meegle mode requires project, sprint, demand, and link field configuration");
+    if (meegle.mode === "polling" && meegle.resultsFile && !meegle.tasksFile) {
+      throw new Error("Polling Meegle mode requires tasksFile when resultsFile is configured");
     }
-  }
-  if (meegle.mode === "polling" && meegle.resultsFile && !meegle.tasksFile) {
-    throw new Error("Polling Meegle mode requires tasksFile when resultsFile is configured");
-  }
-  if (meegle.mode === "webhook" && !meegle.webhookSecret) {
-    throw new Error("Webhook Meegle mode requires TITING_PLUGIN_MEEGLE_WEBHOOK_SECRET");
+    if (meegle.mode === "webhook" && !meegle.webhookSecret) {
+      throw new Error("Webhook Meegle mode requires TITING_PLUGIN_MEEGLE_WEBHOOK_SECRET");
+    }
   }
   if (config.workspace.repoCacheRoot === config.workspace.root) {
     throw new Error("workspace.root and workspace.repoCacheRoot must be different paths");
+  }
+  if (!config.plugins.execution.defaultExecutor.trim()) {
+    throw new Error("TITING_DEFAULT_EXECUTOR must be a non-empty string");
   }
 }
 
 function readString(env: NodeJS.ProcessEnv, names: string[], fallback: string): string {
   const value = readEnv(env, names);
   return value && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+function readNonEmptyString(env: NodeJS.ProcessEnv, names: string[], fallback: string): string {
+  const value = readEnv(env, names);
+  if (value === undefined) {
+    return fallback;
+  }
+  if (value.trim().length === 0) {
+    throw new Error(`${names[0]} must be a non-empty string`);
+  }
+  return value.trim();
 }
 
 function readOptionalString(env: NodeJS.ProcessEnv, names: string[], fallback: string | null): string | null {

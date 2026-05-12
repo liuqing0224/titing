@@ -1008,10 +1008,26 @@ function createConfig(root: string): ServerConfig {
       enableNeedsHumanLoop: false
     },
     plugins: {
+      taskIntegration: {
+        packageName: null
+      },
       execution: {
+        packageName: null,
         defaultExecutor: "codex",
         codexBin: "codex",
         cursorBin: "agent"
+      },
+      environment: {
+        packageName: null
+      },
+      quality: {
+        packageName: null
+      },
+      observabilityGovernance: {
+        packageName: null
+      },
+      log: {
+        packageName: null
       },
       meegle: {
         mode: "polling",
