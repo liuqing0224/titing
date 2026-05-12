@@ -104,6 +104,10 @@ http://localhost:3000/api
 }
 ```
 
+说明：
+
+- `branch` 可选；省略、空字符串或仅空白时，系统会按当前服务进程时区生成 `feature/YYYYMMDDHHmmss-<taskId前8位>`。
+
 必填字段：
 
 - `title`

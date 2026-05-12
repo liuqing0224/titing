@@ -78,6 +78,8 @@ curl -X POST http://localhost:3000/api/tasks \
   }'
 ```
 
+不传 `branch` 时，服务会按当前进程时区自动生成 `feature/YYYYMMDDHHmmss-<taskId前8位>`。
+
 ### 2. 推进入队
 
 ```bash
