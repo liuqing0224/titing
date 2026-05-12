@@ -13,9 +13,52 @@ import {
   LocalWorktreeEnvironmentPlugin
 } from "./plugins";
 import { ServerConfig } from "./config";
+import { mapMeegleTask, normalizeRepoUrl } from "./plugins/shared";
 import { TitingTask } from "@titing/plugin-api";
 
 const execFileAsync = promisify(execFile);
+
+describe("normalizeRepoUrl", () => {
+  it("unwraps markdown mailto-wrapped ssh repo with trailing path", () => {
+    expect(
+      normalizeRepoUrl("[git@gitlab.yc345.tv](mailto:git@gitlab.yc345.tv):frontend/yanxue-main.git")
+    ).toBe("git@gitlab.yc345.tv:frontend/yanxue-main.git");
+  });
+
+  it("passes through plain ssh and https urls", () => {
+    expect(normalizeRepoUrl("git@example.com:grp/repo.git")).toBe("git@example.com:grp/repo.git");
+    expect(normalizeRepoUrl("https://example.com/a/b.git")).toBe("https://example.com/a/b.git");
+  });
+
+  it("uses https href from markdown link", () => {
+    expect(normalizeRepoUrl("[repo](https://gitlab.com/foo/bar.git)")).toBe("https://gitlab.com/foo/bar.git");
+  });
+});
+
+describe("mapMeegleTask", () => {
+  it("normalizes markdown ssh repo field", () => {
+    const task = mapMeegleTask({
+      id: "6983788716",
+      title: "Test",
+      instruction: "Do work",
+      repo: "[git@gitlab.yc345.tv](mailto:git@gitlab.yc345.tv):frontend/yanxue-main.git",
+      branch: "main"
+    }, 0);
+    expect(task.repo).toBe("git@gitlab.yc345.tv:frontend/yanxue-main.git");
+  });
+
+  it("uses the configured default executor when the task payload omits executor", () => {
+    const task = mapMeegleTask({
+      id: "6983788716",
+      title: "Test",
+      instruction: "Do work",
+      repo: "https://example.com/repo.git",
+      branch: "main"
+    }, 0, "cursor");
+
+    expect(task.executor).toBe("cursor");
+  });
+});
 
 describe("LocalWorktreeEnvironmentPlugin", () => {
   it("clones a repo into cache, prepares a worktree, and preserves failed workspace by default", async () => {
@@ -490,6 +533,77 @@ describe("MeegleTaskIntegrationPlugin", () => {
     }
   });
 
+  it("reports needs_human comments and reads human replies from Meegle comments", async () => {
+    const sandbox = await mkdtemp(join(tmpdir(), "titing-meegle-cli-"));
+    const previousLegacy = process.env.MEEGLE_TEST_LEGACY;
+    const previousLog = process.env.MEEGLE_TEST_LOG;
+    try {
+      const bin = join(sandbox, "fake-meegle");
+      const logPath = join(sandbox, "cli-log.jsonl");
+      await writeFakeMeegleCli(bin);
+      delete process.env.MEEGLE_TEST_LEGACY;
+      process.env.MEEGLE_TEST_LOG = logPath;
+
+      const plugin = new MeegleTaskIntegrationPlugin({
+        ...createConfig(sandbox),
+        plugins: {
+          ...createConfig(sandbox).plugins,
+          meegle: {
+            ...createConfig(sandbox).plugins.meegle,
+            mode: "polling",
+            cliBin: bin,
+            tasksFile: null,
+            resultsFile: null,
+            webhookSecret: null,
+            projectKey: "PROJ",
+            queryMql: "SELECT * FROM backlog"
+          }
+        }
+      });
+
+      const task = {
+        ...createTask("https://example.com/query.git"),
+        id: "task-human-1",
+        source: "meegle",
+        externalId: "MEEGLE-MQL-1",
+        traceId: "trace-human-1",
+        metadata: {
+          humanLoop: {
+            requestId: "request-1",
+            requestedAt: "2026-05-11T00:00:00.000Z",
+            seenReplyIds: []
+          }
+        }
+      };
+
+      await plugin.reportNeedsHuman?.(task, {
+        reason: "High-risk modification detected",
+        stopReason: "high_risk",
+        summary: "The diff touches too many files",
+        requestId: "request-1",
+        requestedAt: "2026-05-11T00:00:00.000Z"
+      });
+      const replies = await plugin.pullHumanReplies?.([task]);
+      const logLines = (await readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
+
+      expect(logLines).toContainEqual(expect.arrayContaining(["comment", "add", "--work-item-id", "MEEGLE-MQL-1"]));
+      expect(logLines).toContainEqual(expect.arrayContaining(["comment", "list", "--work-item-id", "MEEGLE-MQL-1"]));
+      expect(replies).toEqual([
+        expect.objectContaining({
+          taskId: "task-human-1",
+          externalId: "MEEGLE-MQL-1",
+          replyId: "comment-user-1",
+          body: "Please retry with the latest requirements",
+          author: "alice"
+        })
+      ]);
+    } finally {
+      process.env.MEEGLE_TEST_LEGACY = previousLegacy;
+      process.env.MEEGLE_TEST_LOG = previousLog;
+      await rm(sandbox, { recursive: true, force: true });
+    }
+  });
+
   it("uses latest sprint CLI detail fallback from description blocks", async () => {
     const sandbox = await mkdtemp(join(tmpdir(), "titing-meegle-cli-"));
     const previousLegacy = process.env.MEEGLE_TEST_LEGACY;
@@ -685,10 +799,12 @@ function createConfig(root: string): ServerConfig {
       qualityTimeoutMs: 60_000,
       environmentRetryLimit: 2,
       executionRetryLimit: 2,
-      maxRepairIterations: 3
+      maxRepairIterations: 3,
+      enableNeedsHumanLoop: false
     },
     plugins: {
       execution: {
+        defaultExecutor: "codex",
         codexBin: "codex",
         cursorBin: "agent"
       },
@@ -886,6 +1002,23 @@ if (args[0] === "workitem" && args[1] === "get") {
 }
 if (args[0] === "comment" && args[1] === "add") {
   print({ ok: true });
+  process.exit(0);
+}
+if (args[0] === "comment" && args[1] === "list") {
+  print({
+    comments: [
+      {
+        id: "comment-system-1",
+        content: "[TITING_NEEDS_HUMAN requestId=id-1 taskId=task-1 traceId=trace-task-1]"
+      },
+      {
+        id: "comment-user-1",
+        content: "Please retry with the latest requirements",
+        author: "alice",
+        createdAt: "2026-05-11T00:10:00.000Z"
+      }
+    ]
+  });
   process.exit(0);
 }
 process.exit(1);

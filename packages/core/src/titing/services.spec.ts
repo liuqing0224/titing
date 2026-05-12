@@ -10,6 +10,8 @@ import {
   ExecutionRecord,
   ExecutionRepository,
   ExecutionResult,
+  HumanReply,
+  NeedsHumanPayload,
   ObservabilityGovernancePlugin,
   PluginConfigRepository,
   PreparedWorkspace,
@@ -219,7 +221,7 @@ describe("TitingServices", () => {
       "continue:codex:s1",
       "continue:codex:s1"
     ]);
-    expect(harness.tasks.get("task-4c")?.status).toBe("needs_human");
+    expect(harness.tasks.get("task-4c")?.status).toBe("failed");
     expect(harness.repairGoals.get("task-4c")).toEqual(expect.objectContaining({
       status: "budget_limited",
       currentIteration: 3,
@@ -227,8 +229,9 @@ describe("TitingServices", () => {
     }));
     expect(harness.transitions.at(-1)).toEqual(expect.objectContaining({
       from: "evaluating",
-      to: "needs_human"
+      to: "failed"
     }));
+    expect(harness.logs.some((item) => item.eventType === "goal.budget_exhausted")).toBe(true);
   });
 
   it("stops after two consecutive no-diff repair rounds", async () => {
@@ -236,7 +239,8 @@ describe("TitingServices", () => {
       tasks: [createTask({ id: "task-5", status: "queued" })],
       executions: [
         createExecutionResult({ exitCode: 1, sessionId: "codex:s1", errorCategory: "command_failed", summary: "fail 1" }),
-        createExecutionResult({ exitCode: 1, sessionId: "codex:s1", errorCategory: "command_failed", summary: "fail 2" })
+        createExecutionResult({ exitCode: 1, sessionId: "codex:s1", errorCategory: "command_failed", summary: "fail 2" }),
+        createExecutionResult({ exitCode: 1, sessionId: "codex:s1", errorCategory: "command_failed", summary: "fail 3" })
       ],
       qualityResults: [
         {
@@ -252,40 +256,112 @@ describe("TitingServices", () => {
           riskLevel: "medium",
           checks: [{ name: "build", passed: false, detail: "bad again" }],
           report: { diff: { filesChanged: 0, insertions: 0, deletions: 0 } }
+        },
+        {
+          passed: false,
+          score: 30,
+          riskLevel: "medium",
+          checks: [{ name: "build", passed: false, detail: "bad again" }],
+          report: { diff: { filesChanged: 0, insertions: 0, deletions: 0 } }
         }
       ]
     });
 
     await harness.services.runSchedulerTick();
 
-    expect(harness.tasks.get("task-5")?.status).toBe("needs_human");
-    expect(harness.transitions.at(-1)?.to).toBe("needs_human");
-    expect(harness.repairGoals.get("task-5")?.status).toBe("needs_human");
+    expect(harness.tasks.get("task-5")?.status).toBe("failed");
+    expect(harness.transitions.at(-1)?.to).toBe("failed");
+    expect(harness.repairGoals.get("task-5")?.status).toBe("budget_limited");
+    expect(harness.logs.some((item) => item.eventType === "goal.stop_reason_continued")).toBe(true);
   });
 
   it("stops immediately on high-risk quality result", async () => {
+    const risky = {
+      passed: false,
+      score: 20,
+      riskLevel: "high" as const,
+      checks: [{ name: "diff-risk", passed: false, detail: "too risky" }],
+      report: { diff: { filesChanged: 30, insertions: 500, deletions: 20 } }
+    };
     const harness = createHarness({
       tasks: [createTask({ id: "task-6", status: "queued" })],
-      executions: [createExecutionResult({ exitCode: 0, sessionId: "codex:s1", summary: "done but risky" })],
-      qualityResults: [
-        {
-          passed: false,
-          score: 20,
-          riskLevel: "high",
-          checks: [{ name: "diff-risk", passed: false, detail: "too risky" }],
-          report: { diff: { filesChanged: 30, insertions: 500, deletions: 20 } }
-        }
-      ]
+      executions: [
+        createExecutionResult({ exitCode: 0, sessionId: "codex:s1", summary: "done but risky" }),
+        createExecutionResult({ exitCode: 0, sessionId: "codex:s1", summary: "still risky" }),
+        createExecutionResult({ exitCode: 0, sessionId: "codex:s1", summary: "still risky" })
+      ],
+      qualityResults: [risky, risky, risky]
     });
 
     await harness.services.runSchedulerTick();
 
-    expect(harness.executionPlugin.calls).toEqual(["execute"]);
-    expect(harness.transitions.map((item) => `${item.from}->${item.to}`)).toEqual([
-      "queued->running",
-      "running->evaluating",
-      "evaluating->needs_human"
+    expect(harness.executionPlugin.calls).toEqual(["execute", "continue:codex:s1", "continue:codex:s1"]);
+    expect(harness.tasks.get("task-6")?.status).toBe("failed");
+    expect(harness.logs.filter((item) => item.eventType === "goal.stop_reason_continued").length).toBeGreaterThanOrEqual(2);
+    expect(harness.logs.some((item) => item.eventType === "goal.budget_exhausted")).toBe(true);
+  });
+
+  it("keeps continuing repair on stop signals when needs_human loop is disabled", async () => {
+    const risky = {
+      passed: false,
+      score: 20,
+      riskLevel: "high" as const,
+      checks: [{ name: "diff-risk", passed: false, detail: "too risky" }],
+      report: { diff: { filesChanged: 30, insertions: 500, deletions: 20 } }
+    };
+    const harness = createHarness({
+      tasks: [createTask({ id: "task-6b", status: "queued" })],
+      executions: [
+        createExecutionResult({ exitCode: 0, sessionId: "codex:s1", summary: "done but risky" }),
+        createExecutionResult({ exitCode: 0, sessionId: "codex:s1", summary: "still risky" }),
+        createExecutionResult({ exitCode: 0, sessionId: "codex:s1", summary: "still risky" })
+      ],
+      qualityResults: [risky, risky, risky],
+      enableNeedsHumanLoop: false
+    });
+
+    await harness.services.runSchedulerTick();
+
+    expect(harness.tasks.get("task-6b")?.status).toBe("failed");
+    expect(harness.reportedNeedsHuman).toEqual([]);
+    expect(harness.logs.some((item) => item.eventType === "goal.stop_reason_continued")).toBe(true);
+  });
+
+  it("escalates stop signals to needs_human and reports through integration when enabled", async () => {
+    const harness = createHarness({
+      tasks: [createTask({ id: "task-human-1", status: "queued" })],
+      executions: [createExecutionResult({ exitCode: 0, sessionId: "codex:s1", summary: "too risky" })],
+      qualityResults: [{
+        passed: false,
+        score: 20,
+        riskLevel: "high",
+        checks: [{ name: "diff-risk", passed: false, detail: "too risky" }],
+        report: { diff: { filesChanged: 30, insertions: 500, deletions: 20 } }
+      }],
+      enableNeedsHumanLoop: true
+    });
+    const task = harness.tasks.get("task-human-1");
+    if (!task) {
+      throw new Error("task-human-1 missing");
+    }
+    task.source = "meegle";
+    task.externalId = "MEEGLE-HUMAN-1";
+    harness.tasks.set(task.id, cloneExistingTask(task));
+
+    await harness.services.runSchedulerTick();
+
+    expect(harness.tasks.get("task-human-1")?.status).toBe("needs_human");
+    expect(harness.reportedNeedsHuman).toEqual([
+      expect.objectContaining({
+        taskId: "task-human-1",
+        externalId: "MEEGLE-HUMAN-1",
+        payload: expect.objectContaining({
+          stopReason: "high_risk"
+        })
+      })
     ]);
+    expect(harness.repairGoals.get("task-human-1")?.status).toBe("needs_human");
+    expect(harness.logs.some((item) => item.eventType === "goal.needs_human_requested")).toBe(true);
   });
 
   it("marks stale busy agents offline and re-queues their running tasks", async () => {
@@ -308,10 +384,50 @@ describe("TitingServices", () => {
     expect(harness.transitions.map((item) => `${item.from}->${item.to}`)).toEqual(["running->queued"]);
   });
 
+  it("refreshes busy agent heartbeat during long-running execution", async () => {
+    let resolveExecution: ((result: ExecutionResult) => void) | undefined;
+    const harness = createHarness({
+      tasks: [createTask({ id: "task-heartbeat", status: "queued" })],
+      executions: [
+        new Promise<ExecutionResult>((resolve) => {
+          resolveExecution = resolve;
+        })
+      ],
+      executionHeartbeatIntervalMs: 1_000
+    });
+
+    const firstRun = harness.services.runSchedulerTick();
+    await new Promise((resolve) => setImmediate(resolve));
+    harness.tickHeartbeat();
+    harness.tickHeartbeat();
+    const busyAgent = harness.agents.get("agent-1");
+
+    expect(busyAgent?.status).toBe("busy");
+    expect(busyAgent?.lastHeartbeatAt.toISOString()).toBe("2026-05-11T00:00:00.000Z");
+
+    const advanced = new Date("2026-05-11T00:04:00.000Z");
+    harness.setNow(advanced);
+    harness.tickHeartbeat();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(busyAgent?.lastHeartbeatAt.toISOString()).toBe("2026-05-11T00:04:00.000Z");
+
+    const recoveryTick = harness.services.runSchedulerTick();
+    resolveExecution?.(createExecutionResult({ sessionId: "codex:long-run" }));
+    await Promise.all([firstRun, recoveryTick]);
+
+    expect(harness.tasks.get("task-heartbeat")?.status).toBe("done");
+    expect(harness.transitions.some((item) => item.from === "running" && item.to === "queued")).toBe(false);
+  });
+
   it("applies governance eval hooks before deciding task completion", async () => {
     const harness = createHarness({
       tasks: [createTask({ id: "task-7a", status: "queued" })],
-      executions: [createExecutionResult({ sessionId: "codex:s1" })],
+      executions: [
+        createExecutionResult({ sessionId: "codex:s1" }),
+        createExecutionResult({ sessionId: "codex:s1" }),
+        createExecutionResult({ sessionId: "codex:s1" })
+      ],
       governancePlugin: {
         id: "gov",
         kind: "observability-governance",
@@ -340,12 +456,14 @@ describe("TitingServices", () => {
 
     await harness.services.runSchedulerTick();
 
-    expect(harness.tasks.get("task-7a")?.status).toBe("needs_human");
+    expect(harness.executionPlugin.calls).toEqual(["execute", "continue:codex:s1", "continue:codex:s1"]);
+    expect(harness.tasks.get("task-7a")?.status).toBe("failed");
     expect(harness.evalResults[0]).toEqual(expect.objectContaining({
       passed: false,
       riskLevel: "high"
     }));
     expect(harness.logs.some((log) => log.eventType === "governance.eval")).toBe(true);
+    expect(harness.logs.some((log) => log.eventType === "goal.budget_exhausted")).toBe(true);
   });
 
   it("refreshes agent heartbeat and revives offline agents to idle", async () => {
@@ -666,6 +784,59 @@ describe("TitingServices", () => {
     expect(harness.executionPlugin.calls).toEqual(["execute"]);
   });
 
+  it("recovers needs_human tasks from integration comment replies when enabled", async () => {
+    const traceId = "trace-human-reply";
+    const requestedAt = "2026-05-11T00:00:00.000Z";
+    const task = createTask({ id: "task-human-2", status: "needs_human", traceId });
+    task.source = "meegle";
+    task.externalId = "MEEGLE-HUMAN-2";
+    task.metadata = {
+      humanLoop: {
+        requestId: "request-1",
+        requestedAt,
+        seenReplyIds: []
+      }
+    };
+    const harness = createHarness({
+      tasks: [task],
+      executions: [],
+      humanReplies: [{
+        taskId: "task-human-2",
+        externalId: "MEEGLE-HUMAN-2",
+        replyId: "reply-1",
+        body: "Please retry with the updated API key",
+        author: "alice",
+        createdAt: "2026-05-11T00:05:00.000Z"
+      }],
+      enableNeedsHumanLoop: true
+    });
+    harness.repairGoals.set("task-human-2", {
+      id: "goal-human-2",
+      taskId: "task-human-2",
+      objective: "repair",
+      constraints: [],
+      doneWhen: ["pass build"],
+      status: "needs_human",
+      currentIteration: 1,
+      maxIterations: 3,
+      lastFailureHash: "hash-1",
+      createdAt: new Date(requestedAt),
+      updatedAt: new Date(requestedAt)
+    });
+
+    await harness.services.runTaskSyncNow();
+
+    expect(harness.tasks.get("task-human-2")?.status).toBe("queued");
+    expect(harness.tasks.get("task-human-2")?.instruction).toContain("Please retry with the updated API key");
+    expect(harness.repairGoals.get("task-human-2")?.status).toBe("repairing");
+    expect(harness.repairGoals.get("task-human-2")?.constraints.at(-1)).toContain("Human guidance:");
+    expect(harness.transitions.at(-1)).toEqual(expect.objectContaining({
+      taskId: "task-human-2",
+      from: "needs_human",
+      to: "queued"
+    }));
+  });
+
   it("lists and upserts plugin configs", async () => {
     const harness = createHarness({
       tasks: [],
@@ -861,11 +1032,14 @@ function createHarness(input: {
   agentOfflineTimeoutMs?: number;
   environmentRetryLimit?: number;
   executionRetryLimit?: number;
+  executionHeartbeatIntervalMs?: number;
   environmentError?: Error;
   pulledTasks?: TitingTask[];
+  humanReplies?: HumanReply[];
+  enableNeedsHumanLoop?: boolean;
   governancePlugin?: ObservabilityGovernancePlugin;
 }) {
-  const now = new Date("2026-05-11T00:00:00.000Z");
+  let now = new Date("2026-05-11T00:00:00.000Z");
   const tasks = new Map(input.tasks.map((task) => [task.id, cloneExistingTask(task)]));
   const transitions: TaskTransition[] = [];
   const logs: ExecutionLogRecord[] = [];
@@ -896,6 +1070,8 @@ function createHarness(input: {
   const agentRecords = new Map(initialAgents.map((agent) => [agent.id, { ...agent }]));
   const agent = agentRecords.values().next().value as AgentRecord;
   const reportedResults: Array<{ taskId: string; externalId: string | null; summary: string }> = [];
+  const reportedNeedsHuman: Array<{ taskId: string; externalId: string | null; payload: NeedsHumanPayload }> = [];
+  const intervalCallbacks: Array<() => void> = [];
 
   const executionPlugin = createExecutionPlugin(input.executions);
   const qualityPlugin = createQualityPlugin(input.qualityResults ?? []);
@@ -952,7 +1128,7 @@ function createHarness(input: {
       }
     },
     runtime: new PluginRuntime([
-      createTaskIntegrationPlugin(input.pulledTasks ?? [], reportedResults),
+      createTaskIntegrationPlugin(input.pulledTasks ?? [], input.humanReplies ?? [], reportedResults, reportedNeedsHuman),
       createEnvironmentPlugin(input.environmentError),
       executionPlugin,
       qualityPlugin,
@@ -962,7 +1138,14 @@ function createHarness(input: {
     createId: createIdFactory(),
     agentOfflineTimeoutMs: input.agentOfflineTimeoutMs,
     environmentRetryLimit: input.environmentRetryLimit,
-    executionRetryLimit: input.executionRetryLimit
+    executionRetryLimit: input.executionRetryLimit,
+    enableNeedsHumanLoop: input.enableNeedsHumanLoop,
+    executionHeartbeatIntervalMs: input.executionHeartbeatIntervalMs,
+    setIntervalFn: (callback) => {
+      intervalCallbacks.push(callback);
+      return callback;
+    },
+    clearIntervalFn: () => undefined
   });
 
   return {
@@ -977,7 +1160,16 @@ function createHarness(input: {
     events,
     executionPlugin,
     qualityPlugin,
-    reportedResults
+    reportedResults,
+    reportedNeedsHuman,
+    setNow: (value: Date) => {
+      now = value;
+    },
+    tickHeartbeat: () => {
+      for (const callback of intervalCallbacks) {
+        callback();
+      }
+    }
   };
 }
 
@@ -1008,8 +1200,11 @@ class InMemoryTaskRepository implements TaskRepository {
       .map((task) => cloneTask(task) as TitingTask);
   }
 
-  async list(): Promise<TitingTask[]> {
-    return [...this.tasks.values()].map((task) => cloneTask(task) as TitingTask);
+  async list(query: { status?: TaskStatus; executor?: string } = {}): Promise<TitingTask[]> {
+    return [...this.tasks.values()]
+      .filter((task) => (query.status ? task.status === query.status : true))
+      .filter((task) => (query.executor ? task.executor === query.executor : true))
+      .map((task) => cloneTask(task) as TitingTask);
   }
 
   async claimQueued(id: string, startedAt: Date): Promise<TitingTask | null> {
@@ -1110,7 +1305,9 @@ function createEnvironmentPlugin(error?: Error) {
 
 function createTaskIntegrationPlugin(
   pulledTasks: TitingTask[],
-  reportedResults: Array<{ taskId: string; externalId: string | null; summary: string }>
+  humanReplies: HumanReply[],
+  reportedResults: Array<{ taskId: string; externalId: string | null; summary: string }>,
+  reportedNeedsHuman: Array<{ taskId: string; externalId: string | null; payload: NeedsHumanPayload }>
 ) {
   return {
     id: "meegle",
@@ -1121,6 +1318,13 @@ function createTaskIntegrationPlugin(
     pullTasks: async () => pulledTasks.map((task) => cloneExistingTask(task)),
     reportResult: async (task: TitingTask, summary: string) => {
       reportedResults.push({ taskId: task.id, externalId: task.externalId, summary });
+    },
+    reportNeedsHuman: async (task: TitingTask, payload: NeedsHumanPayload) => {
+      reportedNeedsHuman.push({ taskId: task.id, externalId: task.externalId, payload });
+    },
+    pullHumanReplies: async (tasks: TitingTask[]) => {
+      const allowedTaskIds = new Set(tasks.map((task) => task.id));
+      return humanReplies.filter((reply) => allowedTaskIds.has(reply.taskId));
     }
   };
 }

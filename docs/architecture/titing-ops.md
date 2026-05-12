@@ -121,6 +121,21 @@ curl -X POST http://localhost:3000/api/tasks/<task-id>/recover \
   -d '{"reason":"manual recovery"}'
 ```
 
+### 哪些情况会停下来等人工处理
+
+- `needs_human`
+  含义：等待人工补充信息、确认或 integration 评论回复。
+  触发：
+  `POST /api/tasks/:id/needs-human` 手工触发；或在 `TITING_GOAL_ENABLE_NEEDS_HUMAN_LOOP=true` 且插件支持评论闭环时，由 Goal Loop 的 `high_risk` / `repeated_failure` / `no_effective_diff` 自动触发。
+- `blocked`
+  含义：自动流程已停止，必须人工修复执行条件后再恢复。
+  触发：
+  环境准备不可重试失败；环境重试预算耗尽；执行阶段可重试错误达到预算上限。
+- `governance blocked`
+  含义：命令或评测命中治理策略。
+  触发：
+  危险命令、命令不在 allowlist、diff 风险超过上限等。该类不会等待“确认继续”，而是直接阻断并收敛为失败或 `blocked`，需要人工调整策略或任务内容。
+
 ### 手工恢复 agent
 
 ```bash

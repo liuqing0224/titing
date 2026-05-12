@@ -1,11 +1,13 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
-import { PluginHealth, TaskIntegrationPlugin, TitingTask } from "@titing/plugin-api";
+import { HumanReply, NeedsHumanPayload, PluginHealth, TaskIntegrationPlugin, TitingTask } from "@titing/plugin-api";
 import { ServerConfig } from "../config";
 import { HttpPluginContext, HttpRoutePlugin } from "../http-plugin";
 import {
   applyDescriptionFallback,
   asNonEmptyString,
+  buildMeegleNeedsHumanComment,
   buildMeegleResultComment,
   extractTaskDetailPayload,
   extractTaskListPayload,
@@ -91,7 +93,7 @@ export class MeegleTaskIntegrationPlugin implements TaskIntegrationPlugin, HttpR
     if (this.config.plugins.meegle.tasksFile) {
       const payload = JSON.parse(await readFile(this.config.plugins.meegle.tasksFile, "utf8")) as { tasks?: unknown[] };
       const rows = Array.isArray(payload.tasks) ? payload.tasks : [];
-      return rows.map((row, index) => mapMeegleTask(row, index));
+      return rows.map((row, index) => mapMeegleTask(row, index, this.defaultExecutor()));
     }
     return this.pullCliTasks();
   }
@@ -116,6 +118,18 @@ export class MeegleTaskIntegrationPlugin implements TaskIntegrationPlugin, HttpR
       return;
     }
     await this.addComment(task.externalId, buildMeegleResultComment(task, summary));
+  }
+
+  async reportNeedsHuman(task: TitingTask, payload: NeedsHumanPayload): Promise<void> {
+    if (!task.externalId) {
+      return;
+    }
+    await this.addComment(task.externalId, buildMeegleNeedsHumanComment(task, payload));
+  }
+
+  async pullHumanReplies(tasks: TitingTask[]): Promise<HumanReply[]> {
+    const replies = await Promise.all(tasks.map(async (task) => this.listHumanReplies(task)));
+    return replies.flat();
   }
 
   /** Shared-secret gate for webhook requests (`x-titing-webhook-secret`). */
@@ -279,7 +293,7 @@ export class MeegleTaskIntegrationPlugin implements TaskIntegrationPlugin, HttpR
       : root.task
         ? [root.task]
         : [];
-    return rows.map((row, index) => mapMeegleTask(row, index));
+    return rows.map((row, index) => mapMeegleTask(row, index, this.defaultExecutor()));
   }
 
   /**
@@ -358,6 +372,10 @@ export class MeegleTaskIntegrationPlugin implements TaskIntegrationPlugin, HttpR
     return this.config.plugins.meegle.cliBin ?? "meegle";
   }
 
+  private defaultExecutor(): "codex" | "cursor" {
+    return this.config.plugins.execution.defaultExecutor;
+  }
+
   private withAuthGlobalArgs(args: string[]): string[] {
     const withGlobal = [...args];
     const authHost = this.config.plugins.meegle.authHost?.trim();
@@ -413,7 +431,7 @@ export class MeegleTaskIntegrationPlugin implements TaskIntegrationPlugin, HttpR
         throw new Error(detailResult.stderr.trim() || detailResult.stdout.trim() || `Meegle task get failed for ${taskId}`);
       }
       const detail = extractTaskDetailPayload(parseJson(detailResult.stdout));
-      tasks.push(mapMeegleTask(mergeMeegleTaskRecords(item, detail), index));
+      tasks.push(mapMeegleTask(mergeMeegleTaskRecords(item, detail), index, this.defaultExecutor()));
     }
     return tasks;
   }
@@ -444,7 +462,7 @@ export class MeegleTaskIntegrationPlugin implements TaskIntegrationPlugin, HttpR
         continue;
       }
       const detail = await this.fetchWorkitemDetail(bin, projectKey, taskId, this.getDetailFields());
-      tasks.push(mapMeegleTask(mergeMeegleTaskRecords(item, detail, projectKey), index));
+      tasks.push(mapMeegleTask(mergeMeegleTaskRecords(item, detail, projectKey), index, this.defaultExecutor()));
     }
     return tasks;
   }
@@ -505,10 +523,11 @@ export class MeegleTaskIntegrationPlugin implements TaskIntegrationPlugin, HttpR
         continue;
       }
       const detail = await this.fetchWorkitemDetail(bin, projectKey, taskId, detailFields);
-      tasks.push(mapMeegleTask(this.normalizeTaskRow(
-        applyDescriptionFallback(mergeMeegleTaskRecords(item, detail, projectKey)),
-        sprintRows[0] ?? {}
-      ), index));
+      tasks.push(mapMeegleTask(
+        this.normalizeTaskRow(applyDescriptionFallback(mergeMeegleTaskRecords(item, detail, projectKey)), sprintRows[0] ?? {}),
+        index,
+        this.defaultExecutor()
+      ));
     }
     return tasks;
   }
@@ -543,6 +562,38 @@ export class MeegleTaskIntegrationPlugin implements TaskIntegrationPlugin, HttpR
     if (result.exitCode !== 0) {
       throw new Error(result.stderr.trim() || result.stdout.trim() || `Meegle comment add failed for ${taskId}`);
     }
+  }
+
+  private async listHumanReplies(task: TitingTask): Promise<HumanReply[]> {
+    if (!task.externalId) {
+      return [];
+    }
+    const result = await runCommand(this.meegleBin(), this.buildCommentListArgs(task.externalId), process.cwd(), 60_000);
+    if (result.exitCode !== 0) {
+      throw new Error(result.stderr.trim() || result.stdout.trim() || `Meegle comment list failed for ${task.externalId}`);
+    }
+    const comments = extractCommentPayload(parseJson(result.stdout));
+    const requestedAt = readHumanLoopRequestedAt(task.metadata);
+    return comments
+      .filter((comment) => !comment.body.includes("[TITING_NEEDS_HUMAN"))
+      .filter((comment) => !requestedAt || new Date(comment.createdAt).getTime() >= new Date(requestedAt).getTime())
+      .map((comment) => ({
+        taskId: task.id,
+        externalId: task.externalId ?? "",
+        replyId: comment.id ?? buildReplyFingerprint(task.externalId ?? "", comment),
+        body: comment.body,
+        author: comment.author,
+        createdAt: comment.createdAt
+      }));
+  }
+
+  private buildCommentListArgs(taskId: string): string[] {
+    const args = ["comment", "list", "--work-item-id", taskId, "-o", "json", "--envelope"];
+    const projectKey = this.config.plugins.meegle.projectKey?.trim() ?? "";
+    if (projectKey) {
+      args.push("--project-key", projectKey);
+    }
+    return args;
   }
 
   /** Default field bundle for generic MQL/detail hydration. */
@@ -630,4 +681,49 @@ function readNumberCandidate(value: Record<string, unknown>, keys: string[]): nu
     }
   }
   return undefined;
+}
+
+function extractCommentPayload(value: unknown): Array<{
+  id?: string;
+  body: string;
+  author?: string;
+  createdAt: string;
+}> {
+  const rows = Array.isArray(value)
+    ? value
+    : value && typeof value === "object"
+      ? (() => {
+          const record = value as Record<string, unknown>;
+          const nested = record.comments ?? record.items ?? record.data ?? record.list ?? record.records;
+          return Array.isArray(nested) ? nested : [];
+        })()
+      : [];
+  return rows
+    .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+    .map((item) => {
+      const body = readStringCandidate(item, ["content", "body", "text", "comment", "message"]) ?? "";
+      const createdAt = readStringCandidate(item, ["createdAt", "created_at", "timestamp"]) ?? new Date(0).toISOString();
+      return {
+        id: readStringCandidate(item, ["id", "commentId", "comment_id"]),
+        body,
+        author: readStringCandidate(item, ["author", "creator", "user", "createdBy", "created_by"]),
+        createdAt
+      };
+    })
+    .filter((item) => item.body.trim().length > 0);
+}
+
+function readHumanLoopRequestedAt(metadata: Record<string, unknown>): string | null {
+  const humanLoop = metadata.humanLoop;
+  if (!humanLoop || typeof humanLoop !== "object") {
+    return null;
+  }
+  const requestedAt = (humanLoop as Record<string, unknown>).requestedAt;
+  return typeof requestedAt === "string" && requestedAt.trim() ? requestedAt : null;
+}
+
+function buildReplyFingerprint(taskId: string, comment: { body: string; author?: string; createdAt: string }): string {
+  return createHash("sha256")
+    .update(`${taskId}:${comment.author ?? ""}:${comment.createdAt}:${comment.body}`)
+    .digest("hex");
 }

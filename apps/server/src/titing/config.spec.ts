@@ -16,6 +16,8 @@ describe("readConfig", () => {
       TITING_GOAL_ENVIRONMENT_RETRY_LIMIT: "5",
       TITING_GOAL_EXECUTION_RETRY_LIMIT: "4",
       TITING_GOAL_MAX_REPAIR_ITERATIONS: "7",
+      TITING_GOAL_ENABLE_NEEDS_HUMAN_LOOP: "true",
+      TITING_DEFAULT_EXECUTOR: "cursor",
       TITING_PLUGIN_EXECUTION_CODEX_BIN: "codex-dev",
       TITING_PLUGIN_EXECUTION_CURSOR_BIN: "cursor-dev",
       TITING_PLUGIN_MEEGLE_MODE: "polling",
@@ -47,10 +49,12 @@ describe("readConfig", () => {
         qualityTimeoutMs: 240_000,
         environmentRetryLimit: 5,
         executionRetryLimit: 4,
-        maxRepairIterations: 7
+        maxRepairIterations: 7,
+        enableNeedsHumanLoop: true
       }),
       plugins: expect.objectContaining({
         execution: {
+          defaultExecutor: "cursor",
           codexBin: "codex-dev",
           cursorBin: "cursor-dev"
         },
@@ -86,7 +90,8 @@ describe("readConfig", () => {
       TITING_MEEGLE_TASKS_FILE: "./legacy-tasks.json",
       TITING_MEEGLE_RESULTS_FILE: "./legacy-results.json",
       CODEX_CLI_BIN: "codex-legacy",
-      CURSOR_CLI_BIN: "agent-legacy"
+      CURSOR_CLI_BIN: "agent-legacy",
+      TITING_PLUGIN_EXECUTION_DEFAULT_EXECUTOR: "cursor"
     });
 
     expect(config.scheduler.agentCount).toBe(3);
@@ -96,7 +101,9 @@ describe("readConfig", () => {
     expect(config.workspace.cleanupOnFailure).toBe(true);
     expect(config.goalRecovery.executionTimeoutMs).toBe(99_000);
     expect(config.goalRecovery.qualityTimeoutMs).toBe(88_000);
+    expect(config.goalRecovery.enableNeedsHumanLoop).toBe(false);
     expect(config.plugins.meegle.tasksFile).toBe("./legacy-tasks.json");
+    expect(config.plugins.execution.defaultExecutor).toBe("cursor");
     expect(config.plugins.execution.codexBin).toBe("codex-legacy");
     expect(config.plugins.execution.cursorBin).toBe("agent-legacy");
   });
@@ -109,6 +116,10 @@ describe("readConfig", () => {
     expect(() => readConfig({
       TITING_PLUGIN_MEEGLE_MODE: "webhook"
     })).toThrow("Webhook Meegle mode requires TITING_PLUGIN_MEEGLE_WEBHOOK_SECRET");
+
+    expect(() => readConfig({
+      TITING_DEFAULT_EXECUTOR: "claude"
+    })).toThrow("Invalid value for TITING_DEFAULT_EXECUTOR: claude");
   });
 
   it("returns defaults when no env overrides are provided", () => {
@@ -116,6 +127,7 @@ describe("readConfig", () => {
 
     expect(config.scheduler.intervalMs).toBe(CONFIG_DEFAULTS.scheduler.intervalMs);
     expect(config.goalRecovery.maxRepairIterations).toBe(CONFIG_DEFAULTS.goalRecovery.maxRepairIterations);
+    expect(config.goalRecovery.enableNeedsHumanLoop).toBe(CONFIG_DEFAULTS.goalRecovery.enableNeedsHumanLoop);
     expect(config.governance.maxDiffLines).toBe(CONFIG_DEFAULTS.governance.maxDiffLines);
   });
 });

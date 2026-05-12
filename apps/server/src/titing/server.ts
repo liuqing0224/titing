@@ -110,6 +110,7 @@ export async function buildServer(config: ServerConfig = readConfig()) {
     environmentRetryLimit: config.goalRecovery.environmentRetryLimit,
     executionRetryLimit: config.goalRecovery.executionRetryLimit,
     maxRepairIterations: config.goalRecovery.maxRepairIterations,
+    enableNeedsHumanLoop: config.goalRecovery.enableNeedsHumanLoop,
     createId: () => randomUUID()
   });
 
@@ -193,7 +194,7 @@ function wireRoutes(fastify: FastifyInstance, state: BootstrapState): void {
       repo: body.repo,
       branch: body.branch,
       priority: body.priority,
-      executor: body.executor,
+      executor: body.executor ?? state.config.plugins.execution.defaultExecutor,
       source: body.source,
       externalId: body.externalId,
       constraints: body.constraints,
@@ -494,9 +495,9 @@ function evaluatePluginReadiness(
   };
 }
 
-async function seedAgents(services: TitingServices, agentCount: number): Promise<void> {
+export async function seedAgents(services: TitingServices, agentCount: number): Promise<void> {
   const existing = await services.listAgents();
-  const byKey = new Set(existing.map((agent) => agent.id));
+  const byKey = new Map(existing.map((agent) => [agent.id, agent]));
   const now = new Date();
   const desired: AgentRecord[] = [];
   for (let index = 1; index <= agentCount; index += 1) {
@@ -523,8 +524,20 @@ async function seedAgents(services: TitingServices, agentCount: number): Promise
   }
 
   for (const agent of desired) {
-    if (!byKey.has(agent.id)) {
+    const existingAgent = byKey.get(agent.id);
+    if (!existingAgent) {
       await services.upsertAgent(agent);
+      continue;
+    }
+    if (existingAgent.status === "offline" && existingAgent.taskId === null) {
+      await services.upsertAgent({
+        ...existingAgent,
+        status: "idle",
+        executor: agent.executor,
+        labels: agent.labels,
+        lastHeartbeatAt: now,
+        updatedAt: now
+      });
     }
   }
 }

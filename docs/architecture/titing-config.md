@@ -1,6 +1,6 @@
 # Titing Configuration
 
-更新日期：2026-05-11
+更新日期：2026-05-12
 
 Titing 服务端配置现已按运行职责收敛为结构化模型：
 
@@ -24,9 +24,11 @@ type ServerConfig = {
     environmentRetryLimit: number;
     executionRetryLimit: number;
     maxRepairIterations: number;
+    enableNeedsHumanLoop: boolean;
   };
   plugins: {
     execution: {
+      defaultExecutor: "codex" | "cursor";
       codexBin: string;
       cursorBin: string;
     };
@@ -82,11 +84,13 @@ type ServerConfig = {
 | `TITING_GOAL_ENVIRONMENT_RETRY_LIMIT` | `2` | - | 环境失败自动重试次数 |
 | `TITING_GOAL_EXECUTION_RETRY_LIMIT` | `2` | - | 执行阶段瞬时失败自动重试次数 |
 | `TITING_GOAL_MAX_REPAIR_ITERATIONS` | `3` | - | Goal Loop 最大 repair 轮次 |
+| `TITING_GOAL_ENABLE_NEEDS_HUMAN_LOOP` | `false` | - | 是否启用 stop signal 自动转 `needs_human` 以及评论恢复闭环 |
 
 ### Plugins
 
 | Env | Default | Legacy Fallback | Notes |
 | --- | --- | --- | --- |
+| `TITING_DEFAULT_EXECUTOR` | `codex` | `TITING_PLUGIN_EXECUTION_DEFAULT_EXECUTOR` | 未显式传 `executor` 的任务默认执行器，可选 `codex` 或 `cursor` |
 | `TITING_PLUGIN_EXECUTION_CODEX_BIN` | `codex` | `CODEX_CLI_BIN` | Codex CLI binary |
 | `TITING_PLUGIN_EXECUTION_CURSOR_BIN` | `agent` | `CURSOR_CLI_BIN` | Cursor CLI binary |
 | `TITING_PLUGIN_MEEGLE_MODE` | `polling` | - | `polling` 或 `webhook` |

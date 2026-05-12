@@ -5,15 +5,18 @@ import {
   EvalResult,
   EvalResultRepository,
   EventSink,
+  HumanReply,
   ExecutionLogRecord,
   ExecutionLogRepository,
   ExecutionRecord,
   ExecutionRepository,
+  NeedsHumanPayload,
   ObservabilityCorrelation,
   PluginConfigRepository,
   PreparedWorkspace,
   RepairGoal,
   RepairGoalRepository,
+  TaskIntegrationPlugin,
   TaskListQuery,
   TaskRepository,
   TaskStatus,
@@ -44,6 +47,10 @@ export type ServiceDependencies = {
   environmentRetryLimit?: number;
   executionRetryLimit?: number;
   maxRepairIterations?: number;
+  enableNeedsHumanLoop?: boolean;
+  executionHeartbeatIntervalMs?: number;
+  setIntervalFn?: (callback: () => void, ms: number) => unknown;
+  clearIntervalFn?: (timer: unknown) => void;
 };
 
 export class TitingServices {
@@ -54,6 +61,10 @@ export class TitingServices {
   private readonly environmentRetryLimit: number;
   private readonly executionRetryLimit: number;
   private readonly maxRepairIterations: number;
+  private readonly enableNeedsHumanLoop: boolean;
+  private readonly executionHeartbeatIntervalMs: number;
+  private readonly setIntervalFn: (callback: () => void, ms: number) => unknown;
+  private readonly clearIntervalFn: (timer: unknown) => void;
   private schedulerTickInFlight = false;
 
   constructor(private readonly deps: ServiceDependencies) {
@@ -63,6 +74,10 @@ export class TitingServices {
     this.environmentRetryLimit = deps.environmentRetryLimit ?? 2;
     this.executionRetryLimit = deps.executionRetryLimit ?? 2;
     this.maxRepairIterations = deps.maxRepairIterations ?? 3;
+    this.enableNeedsHumanLoop = deps.enableNeedsHumanLoop ?? false;
+    this.executionHeartbeatIntervalMs = deps.executionHeartbeatIntervalMs ?? Math.max(1_000, Math.floor(this.agentOfflineTimeoutMs / 3));
+    this.setIntervalFn = deps.setIntervalFn ?? ((callback, ms) => setInterval(callback, ms));
+    this.clearIntervalFn = deps.clearIntervalFn ?? ((timer) => clearInterval(timer as NodeJS.Timeout));
   }
 
   async createTask(input: CreateTaskInput): Promise<TitingTask> {
@@ -250,6 +265,151 @@ export class TitingServices {
 
   async getRepairGoal(taskId: string): Promise<RepairGoal | null> {
     return this.deps.repairGoals.getByTaskId(taskId);
+  }
+
+  private async syncHumanRepliesForIntegration(
+    integration: TaskIntegrationPlugin & Required<Pick<TaskIntegrationPlugin, "pullHumanReplies">>
+  ): Promise<void> {
+    const tasks = (await this.deps.tasks.list({ status: "needs_human" }))
+      .filter((task) => task.source === integration.id && Boolean(task.externalId));
+    if (tasks.length === 0) {
+      return;
+    }
+    const replies = await integration.pullHumanReplies(tasks);
+    for (const reply of sortHumanReplies(replies)) {
+      await this.applyHumanReply(integration, tasks, reply);
+    }
+  }
+
+  private async applyHumanReply(
+    integration: TaskIntegrationPlugin,
+    candidateTasks: TitingTask[],
+    reply: HumanReply
+  ): Promise<void> {
+    const task = candidateTasks.find((item) => item.id === reply.taskId)
+      ?? candidateTasks.find((item) => item.externalId === reply.externalId)
+      ?? await this.deps.tasks.getById(reply.taskId)
+      ?? await this.deps.tasks.getByExternalId(integration.id, reply.externalId);
+    if (!task || task.status !== "needs_human") {
+      return;
+    }
+
+    const humanLoop = readHumanLoopMetadata(task.metadata);
+    if (!humanLoop.requestedAt || humanLoop.seenReplyIds.includes(reply.replyId)) {
+      return;
+    }
+    if (new Date(reply.createdAt).getTime() < new Date(humanLoop.requestedAt).getTime()) {
+      return;
+    }
+
+    task.instruction = appendHumanReplyToInstruction(task.instruction, reply);
+    task.metadata = {
+      ...task.metadata,
+      humanLoop: {
+        ...humanLoop,
+        lastReplyId: reply.replyId,
+        lastReplyAt: reply.createdAt,
+        lastReplyAuthor: reply.author,
+        lastReplyBody: reply.body,
+        seenReplyIds: trimReplyIds([...humanLoop.seenReplyIds, reply.replyId])
+      }
+    };
+    task.updatedAt = this.now();
+    await this.deps.tasks.save(task);
+
+    const goal = await this.deps.repairGoals.getByTaskId(task.id);
+    if (goal) {
+      await this.deps.repairGoals.upsert({
+        ...goal,
+        status: "repairing",
+        constraints: appendHumanGuidanceConstraint(goal.constraints, reply.body),
+        updatedAt: this.now()
+      });
+    }
+
+    await this.appendExecutionLog(task, null, "goal.human_reply_received", "Human reply received from integration comment", {
+      replyId: reply.replyId,
+      externalId: reply.externalId,
+      author: reply.author,
+      createdAt: reply.createdAt
+    }, this.buildCorrelation({ task, pluginId: integration.id }));
+    await this.recoverTask(task.id, integration.id, "Recovered from integration comment reply");
+  }
+
+  private async handleNeedsHumanStopReason(
+    task: TitingTask,
+    execution: ExecutionRecord,
+    goal: RepairGoal,
+    stopReason: "high_risk" | "repeated_failure" | "no_effective_diff",
+    result: ExecutionResult,
+    evalResult: EvalResult,
+    operator: string,
+    agentId: string
+  ): Promise<{ task: TitingTask; goal: RepairGoal } | null> {
+    const integration = this.deps.runtime.getTaskIntegrations().find((plugin) => (
+      plugin.id === task.source && typeof plugin.reportNeedsHuman === "function"
+    ));
+    if (!integration?.reportNeedsHuman) {
+      return null;
+    }
+
+    const requestedAt = this.now();
+    const requestId = this.createId();
+    task.metadata = {
+      ...task.metadata,
+      humanLoop: {
+        ...readHumanLoopMetadata(task.metadata),
+        requestId,
+        requestedAt: requestedAt.toISOString()
+      }
+    };
+    task.updatedAt = requestedAt;
+    await this.deps.tasks.save(task);
+
+    const nextGoal: RepairGoal = {
+      ...goal,
+      status: "needs_human",
+      updatedAt: requestedAt
+    };
+    await this.deps.repairGoals.upsert(nextGoal);
+
+    const summary = describeStopReason(stopReason);
+    const payload: NeedsHumanPayload = {
+      reason: summary,
+      stopReason,
+      summary: result.summary,
+      requestId,
+      requestedAt: requestedAt.toISOString(),
+      evalResultId: evalResult.id,
+      executionId: execution.id
+    };
+    await this.appendExecutionLog(
+      task,
+      execution,
+      "goal.needs_human_requested",
+      summary,
+      {
+        stopReason,
+        requestId,
+        riskLevel: evalResult.riskLevel,
+        iteration: nextGoal.currentIteration,
+        maxIterations: nextGoal.maxIterations,
+        evalResultId: evalResult.id,
+        executionId: execution.id,
+        score: evalResult.score
+      },
+      this.buildCorrelation({ task, execution, pluginId: integration.id, agentId })
+    );
+    await integration.reportNeedsHuman(task, payload);
+    await this.updateExecutionStatus(execution, task, "failed", `Human input required: ${summary}`, {
+      stopReason,
+      requestId,
+      riskLevel: evalResult.riskLevel
+    });
+    const needsHumanTask = await this.transitionTask(task, "needs_human", summary, operator, execution);
+    needsHumanTask.completedAt = requestedAt;
+    await this.deps.tasks.save(needsHumanTask);
+    return { task: needsHumanTask, goal: nextGoal };
   }
 
   async listAgents(): Promise<AgentRecord[]> {
@@ -460,6 +620,25 @@ export class TitingServices {
       for (const task of tasks) {
         await this.ingestPulledTask(task, integration.id);
       }
+      if (this.enableNeedsHumanLoop && integration.pullHumanReplies) {
+        try {
+          await this.syncHumanRepliesForIntegration(
+            integration as TaskIntegrationPlugin & Required<Pick<TaskIntegrationPlugin, "pullHumanReplies">>
+          );
+        } catch (error) {
+          await this.publishEvent({
+            correlation: this.buildCorrelation({
+              traceId: `plugin:${integration.id}`,
+              pluginId: integration.id
+            }),
+            eventType: "plugin.human_reply_sync_failed",
+            message: "Human reply sync failed",
+            data: {
+              error: error instanceof Error ? error.message : String(error)
+            }
+          });
+        }
+      }
     }
     await this.publishEvent({
       correlation: this.buildCorrelation({ traceId: "scheduler" }),
@@ -555,6 +734,7 @@ export class TitingServices {
     let currentTask = task;
     let workspace: PreparedWorkspace | null = null;
     let execution: ExecutionRecord | null = null;
+    const stopHeartbeat = this.startAgentHeartbeatLoop(agent.id);
 
     await this.publish("scheduler.agent_selected", "Agent selected", currentTask, { agentId: agent.id });
 
@@ -669,11 +849,7 @@ export class TitingServices {
           iteration: loopCount,
           maxIterations: goal?.maxIterations ?? this.maxRepairIterations
         });
-        const nextGoalStatus: RepairGoal["status"] = stopReason === "budget_limited"
-          ? "budget_limited"
-          : stopReason
-            ? "needs_human"
-            : "repairing";
+        const nextGoalStatus: RepairGoal["status"] = stopReason === "budget_limited" ? "budget_limited" : "repairing";
         const nextGoal: RepairGoal = {
           id: goal?.id ?? this.createId(),
           taskId: currentTask.id,
@@ -690,22 +866,70 @@ export class TitingServices {
         goal = nextGoal;
         await this.deps.repairGoals.upsert(goal);
 
-        if (stopReason) {
-          await this.updateExecutionStatus(execution, currentTask, "failed", "Repair budget exhausted", {
+        if (stopReason === "budget_limited") {
+          const summary = describeStopReason(stopReason);
+          await this.appendExecutionLog(
+            currentTask,
+            execution,
+            "goal.budget_exhausted",
+            summary,
+            {
+              stopReason,
+              iteration: loopCount,
+              maxIterations: nextGoal.maxIterations,
+              riskLevel: evalResult.riskLevel,
+              evalResultId: evalResult.id,
+              score: evalResult.score
+            },
+            this.buildCorrelation({ task: currentTask, execution, agentId: agent.id })
+          );
+          await this.updateExecutionStatus(execution, currentTask, "failed", summary, {
             iteration: loopCount,
             maxIterations: nextGoal.maxIterations,
             stopReason
           });
-          currentTask = await this.transitionTask(
-            currentTask,
-            "needs_human",
-            describeStopReason(stopReason),
-            qualityPlugin.id,
-            execution
-          );
+          currentTask = await this.transitionTask(currentTask, "failed", summary, qualityPlugin.id, execution);
           currentTask.completedAt = this.now();
           await this.deps.tasks.save(currentTask);
+          await this.reportTaskResultIfNeeded(currentTask, summary);
           break;
+        }
+
+        if (stopReason && this.enableNeedsHumanLoop) {
+          const handledByHumanLoop = await this.handleNeedsHumanStopReason(
+            currentTask,
+            execution,
+            nextGoal,
+            stopReason,
+            result,
+            evalResult,
+            qualityPlugin.id,
+            agent.id
+          );
+          if (handledByHumanLoop) {
+            currentTask = handledByHumanLoop.task;
+            goal = handledByHumanLoop.goal;
+            break;
+          }
+        }
+
+        if (stopReason) {
+          await this.appendExecutionLog(
+            currentTask,
+            execution,
+            "goal.stop_reason_continued",
+            `Continuing repair after stop signal: ${stopReason}`,
+            {
+              stopReason,
+              riskLevel: evalResult.riskLevel,
+              iteration: loopCount,
+              maxIterations: nextGoal.maxIterations,
+              evalResultId: evalResult.id,
+              score: evalResult.score,
+              evalPassed: evalResult.passed
+            },
+            this.buildCorrelation({ task: currentTask, execution, agentId: agent.id })
+          );
         }
 
         await this.updateExecutionStatus(execution, currentTask, "repairing", "Execution requires repair", {
@@ -747,11 +971,33 @@ export class TitingServices {
       );
       await this.reportTaskResultIfNeeded(failedTask, message);
     } finally {
+      stopHeartbeat();
       if (workspace) {
         await environment.cleanupWorkspace(currentTask, workspace);
       }
       await this.releaseAgent(agent);
     }
+  }
+
+  private startAgentHeartbeatLoop(agentId: string): () => void {
+    let active = true;
+    let heartbeatInFlight = false;
+    const timer = this.setIntervalFn(() => {
+      if (!active || heartbeatInFlight) {
+        return;
+      }
+      heartbeatInFlight = true;
+      void this.heartbeatAgent(agentId, "busy")
+        .catch(() => undefined)
+        .finally(() => {
+          heartbeatInFlight = false;
+        });
+    }, this.executionHeartbeatIntervalMs);
+
+    return () => {
+      active = false;
+      this.clearIntervalFn(timer);
+    };
   }
 
   private async createExecution(task: TitingTask, agentId: string, workspace: PreparedWorkspace): Promise<ExecutionRecord> {
@@ -1285,6 +1531,9 @@ function decideStopReason(input: {
   iteration: number;
   maxIterations: number;
 }): "high_risk" | "repeated_failure" | "no_effective_diff" | "budget_limited" | null {
+  if (input.iteration >= input.maxIterations) {
+    return "budget_limited";
+  }
   if (input.qualityRiskLevel === "high") {
     return "high_risk";
   }
@@ -1293,9 +1542,6 @@ function decideStopReason(input: {
   }
   if (input.noDiffStreak >= 2) {
     return "no_effective_diff";
-  }
-  if (input.iteration >= input.maxIterations) {
-    return "budget_limited";
   }
   return null;
 }
@@ -1404,6 +1650,48 @@ function readGovernanceEntries(container: Record<string, unknown>): Array<{
         : {},
       pluginId: typeof item.pluginId === "string" ? item.pluginId : undefined
     }));
+}
+
+function sortHumanReplies(replies: HumanReply[]): HumanReply[] {
+  return [...replies].sort((left, right) => {
+    const byTime = new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+    if (byTime !== 0) {
+      return byTime;
+    }
+    return left.replyId.localeCompare(right.replyId);
+  });
+}
+
+function appendHumanReplyToInstruction(instruction: string, reply: HumanReply): string {
+  const author = reply.author?.trim() ? `, ${reply.author.trim()}` : "";
+  return `${instruction.trim()}\n\nHuman reply (${reply.createdAt}${author}):\n${reply.body.trim()}`.trim();
+}
+
+function appendHumanGuidanceConstraint(constraints: string[], body: string): string[] {
+  return [...constraints, `Human guidance: ${body.trim()}`];
+}
+
+function trimReplyIds(replyIds: string[]): string[] {
+  return replyIds.slice(-20);
+}
+
+function readHumanLoopMetadata(metadata: Record<string, unknown>): {
+  requestId?: string;
+  requestedAt?: string;
+  seenReplyIds: string[];
+} {
+  const humanLoop = metadata.humanLoop;
+  if (!humanLoop || typeof humanLoop !== "object") {
+    return { seenReplyIds: [] };
+  }
+  const value = humanLoop as Record<string, unknown>;
+  return {
+    requestId: typeof value.requestId === "string" ? value.requestId : undefined,
+    requestedAt: typeof value.requestedAt === "string" ? value.requestedAt : undefined,
+    seenReplyIds: Array.isArray(value.seenReplyIds)
+      ? value.seenReplyIds.filter((item): item is string => typeof item === "string")
+      : []
+  };
 }
 
 function toNumber(value: unknown): number {

@@ -180,6 +180,16 @@ curl -X POST http://localhost:3000/api/integrations/meegle/webhook \
 
 ### 任务进入 `needs_human`
 
+- `TITING_GOAL_ENABLE_NEEDS_HUMAN_LOOP=false` 时：
+  自动 Goal Loop 在命中 `high_risk` / `repeated_failure` / `no_effective_diff` 等 stop 信号时继续 repair，并写 `goal.stop_reason_continued` 日志；达到迭代上限时写 `goal.budget_exhausted` 并以 `failed` 结束。
+- `TITING_GOAL_ENABLE_NEEDS_HUMAN_LOOP=true` 时：
+  如果任务来源插件支持人工回复闭环，上述 stop signal 会自动进入 `needs_human`，并回写 integration 评论；收到用户评论回复后，任务会自动恢复到 `queued` 继续执行。
+- 仍可通过 `POST /api/tasks/:id/needs-human` 主动置为 `needs_human`。
 - 运行 `diagnose:task`
 - 看 eval risk、repair goal、最近 logs
 
+### 任务进入 `blocked`
+
+- 环境准备失败且不可重试时，会进入 `blocked`。
+- 环境或执行阶段的自动重试预算耗尽时，也会进入 `blocked`。
+- `blocked` 不会自动恢复，通常需要人工修复依赖、repo、分支、CLI、网络或治理策略，然后调用 `POST /api/tasks/:id/recover`。

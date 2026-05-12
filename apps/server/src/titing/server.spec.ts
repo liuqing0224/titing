@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { buildServerWithState } from "./server";
+import { buildServerWithState, seedAgents } from "./server";
 import { CONFIG_DEFAULTS, ServerConfig } from "./config";
 import { createBuiltinPlugins } from "./plugins";
 import { NotFoundError, TitingServices } from "@titing/core";
@@ -24,6 +24,42 @@ import {
 const execFileAsync = promisify(execFile);
 
 describe("titing server handlers", () => {
+  it("revives seeded offline agents on startup so queued tasks remain dispatchable", async () => {
+    const existingOffline = {
+      ...createAgent(),
+      id: "codex-agent-1",
+      status: "offline" as const,
+      executor: "codex",
+      taskId: null,
+      lastHeartbeatAt: new Date("2026-05-10T00:00:00.000Z"),
+      updatedAt: new Date("2026-05-10T00:00:00.000Z")
+    };
+    const upserts: AgentRecord[] = [];
+    const services = {
+      listAgents: async () => [existingOffline],
+      upsertAgent: async (agent: AgentRecord) => {
+        upserts.push(agent);
+      }
+    } as Pick<TitingServices, "listAgents" | "upsertAgent"> as TitingServices;
+
+    await seedAgents(services, 1);
+
+    expect(upserts).toEqual([
+      expect.objectContaining({
+        id: "codex-agent-1",
+        status: "idle",
+        executor: "codex",
+        taskId: null
+      }),
+      expect.objectContaining({
+        id: "cursor-agent-1",
+        status: "idle",
+        executor: "cursor",
+        taskId: null
+      })
+    ]);
+  });
+
   it("returns structured health and readiness payloads", async () => {
     const server = await buildServerWithState(createState(), { startScheduler: false });
     try {
@@ -61,6 +97,30 @@ describe("titing server handlers", () => {
       expect(response.statusCode).toBe(400);
       expect(response.json()).toEqual({ error: "title, instruction, and repo are required" });
       expect(state.calls.createTask).toHaveLength(0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("uses configured default executor for manual task creation when request omits executor", async () => {
+    const state = createState();
+    const server = await buildServerWithState(state, { startScheduler: false });
+    try {
+      const response = await server.inject({
+        method: "POST",
+        url: "/api/tasks",
+        payload: {
+          title: "Fix build",
+          instruction: "Run build and fix errors",
+          repo: "https://example.com/repo.git"
+        }
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(state.calls.createTask).toHaveLength(1);
+      expect(state.calls.createTask[0]).toEqual(expect.objectContaining({
+        executor: "codex"
+      }));
     } finally {
       await server.close();
     }
@@ -479,6 +539,10 @@ function createConfig(): ServerConfig {
     },
     plugins: {
       ...CONFIG_DEFAULTS.plugins,
+      execution: {
+        ...CONFIG_DEFAULTS.plugins.execution,
+        defaultExecutor: "codex"
+      },
       meegle: {
         mode: "webhook",
         tasksFile: null,

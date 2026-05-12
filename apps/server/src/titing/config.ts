@@ -19,9 +19,11 @@ export type ServerConfig = {
     environmentRetryLimit: number;
     executionRetryLimit: number;
     maxRepairIterations: number;
+    enableNeedsHumanLoop: boolean;
   };
   plugins: {
     execution: {
+      defaultExecutor: "codex" | "cursor";
       codexBin: string;
       cursorBin: string;
     };
@@ -73,10 +75,12 @@ export const CONFIG_DEFAULTS = {
     qualityTimeoutMs: 600_000,
     environmentRetryLimit: 2,
     executionRetryLimit: 2,
-    maxRepairIterations: 3
+    maxRepairIterations: 3,
+    enableNeedsHumanLoop: false
   },
   plugins: {
     execution: {
+      defaultExecutor: "codex" as const,
       codexBin: "codex",
       cursorBin: "agent"
     },
@@ -184,10 +188,21 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
         env,
         ["TITING_GOAL_MAX_REPAIR_ITERATIONS"],
         CONFIG_DEFAULTS.goalRecovery.maxRepairIterations
+      ),
+      enableNeedsHumanLoop: readBoolean(
+        env,
+        ["TITING_GOAL_ENABLE_NEEDS_HUMAN_LOOP"],
+        CONFIG_DEFAULTS.goalRecovery.enableNeedsHumanLoop
       )
     },
     plugins: {
       execution: {
+        defaultExecutor: readEnum(
+          env,
+          ["TITING_DEFAULT_EXECUTOR", "TITING_PLUGIN_EXECUTION_DEFAULT_EXECUTOR"],
+          ["codex", "cursor"],
+          CONFIG_DEFAULTS.plugins.execution.defaultExecutor
+        ),
         codexBin: readString(
           env,
           ["TITING_PLUGIN_EXECUTION_CODEX_BIN", "CODEX_CLI_BIN"],

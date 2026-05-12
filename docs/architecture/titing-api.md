@@ -142,6 +142,11 @@ http://localhost:3000/api
 
 把任务置为 `needs_human`。
 
+自动进入 `needs_human` 的行为现在受环境变量 `TITING_GOAL_ENABLE_NEEDS_HUMAN_LOOP` 控制：
+
+- `false`：自动 Goal Loop 在命中 `high_risk` / `repeated_failure` / `no_effective_diff` 等 stop signal 时继续 repair，并写 `goal.stop_reason_continued`；达到迭代上限后写 `goal.budget_exhausted` 并以 `failed` 结束。
+- `true`：当任务来源插件支持人工回复闭环时，以上 stop signal 会自动转入 `needs_human`，并通过 integration 回写评论；后续收到用户评论回复后会自动恢复执行链。
+
 请求体：
 
 ```json
@@ -153,6 +158,11 @@ http://localhost:3000/api
 ### `POST /tasks/:id/recover`
 
 从 `blocked / needs_human / failed` 等人工恢复回执行链。
+
+说明：
+
+- `needs_human` 通常表示等待人工补充信息、审批或评论回复。
+- `blocked` 通常表示自动重试已经停止，需要人工修复环境、依赖、配置或执行条件。
 
 请求体：
 
@@ -346,4 +356,3 @@ data: <json>
 - `eventType`
 - `timestamp`
 - `data.correlation`
-

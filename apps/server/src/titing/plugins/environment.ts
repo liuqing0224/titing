@@ -44,10 +44,28 @@ export class LocalWorktreeEnvironmentPlugin implements EnvironmentPlugin {
     await mkdir(this.config.workspace.repoCacheRoot, { recursive: true });
     await mkdir(artifactsPath, { recursive: true });
 
+    if (await pathExists(cachePath)) {
+      await this.removeRegisteredWorktree(cachePath, repoPath);
+    }
     if (!(await pathExists(cachePath))) {
       await runCheckedCommand("git", ["clone", "--mirror", task.repo, cachePath], this.config.workspace.root, process.env, this.config.goalRecovery.executionTimeoutMs, "clone");
     } else {
-      await runCheckedCommand("git", ["--git-dir", cachePath, "fetch", "--all", "--prune"], this.config.workspace.root, process.env, this.config.goalRecovery.executionTimeoutMs, "fetch");
+      await runCheckedCommand(
+        "git",
+        [
+          "--git-dir",
+          cachePath,
+          "fetch",
+          "origin",
+          "--prune",
+          "+refs/heads/*:refs/remotes/origin/*",
+          "+refs/tags/*:refs/tags/*"
+        ],
+        this.config.workspace.root,
+        process.env,
+        this.config.goalRecovery.executionTimeoutMs,
+        "fetch"
+      );
     }
 
     await rm(repoPath, { recursive: true, force: true });
@@ -93,22 +111,30 @@ export class LocalWorktreeEnvironmentPlugin implements EnvironmentPlugin {
    */
   async cleanupWorkspace(task: TitingTask, workspace: PreparedWorkspace): Promise<void> {
     try {
-      if (await pathExists(workspace.repoPath)) {
-        await runCheckedCommand(
-          "git",
-          ["--git-dir", workspace.cachePath, "worktree", "remove", "--force", workspace.repoPath],
-          this.config.workspace.root,
-          process.env,
-          this.config.goalRecovery.executionTimeoutMs,
-          "cleanup"
-        );
-      }
+      await this.removeRegisteredWorktree(workspace.cachePath, workspace.repoPath);
     } finally {
       const shouldDelete =
         (task.status === "done" && this.config.workspace.cleanupOnSuccess) ||
         (task.status !== "done" && this.config.workspace.cleanupOnFailure);
       if (shouldDelete) {
         await rm(workspace.workspacePath, { recursive: true, force: true });
+      }
+    }
+  }
+
+  private async removeRegisteredWorktree(cachePath: string, repoPath: string): Promise<void> {
+    try {
+      await runCheckedCommand(
+        "git",
+        ["--git-dir", cachePath, "worktree", "remove", "--force", repoPath],
+        this.config.workspace.root,
+        process.env,
+        this.config.goalRecovery.executionTimeoutMs,
+        "cleanup"
+      );
+    } catch (error) {
+      if (!(error instanceof EnvironmentPreparationError) || error.stage !== "cleanup") {
+        throw error;
       }
     }
   }

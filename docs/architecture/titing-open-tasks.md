@@ -53,7 +53,7 @@
 - [x] 当前已有 repair loop 骨架，但停止条件不完整。现已补齐 stop reason 分析与 session-aware repair loop。
 - [x] 实现“连续两轮无有效 diff”停止条件。已基于 diff 统计加入 `no_effective_diff` 终止。
 - [x] 实现“同类错误重复”归因与停止条件。已基于失败签名加入 repeated failure 检测。
-- [x] 实现“高风险修改”阻断。高风险评测会直接收敛到 `needs_human`。
+- [x] 实现“高风险修改”阻断。高风险评测不再自动收敛到 `needs_human`：写入 `execution_logs`（`goal.stop_reason_continued`）后继续 repair，直至迭代上限后以 `budget_limited` 收尾为 `failed`；仍可通过 API 手动 `needs-human`。
 - [x] 将 `RepairGoal.status` 与真实循环状态对齐，而不是只在达到上限时写 `budget_limited`。现已按 `repairing / achieved / needs_human / budget_limited` 真实落库。
 - [x] 支持从前一次执行结果中生成更具体的 repair objective、constraints、doneWhen。现已从失败 checks、风险和任务约束推导 repair 目标。
 
@@ -158,7 +158,7 @@
 - [x] 为 plugin runtime 编写 capability 选择测试。现已覆盖 `init(config)`、disabled 过滤、priority override 和 capability miss 场景，并让运行时选择逻辑真正吃 `plugin_configs.enabled/priority`。
 - [x] 为 repositories 编写 SQLite 集成测试。现已通过临时 SQLite 真库覆盖 tasks/trace/transitions/executions/logs/agents/plugin configs 的 round-trip 和 claim 语义。
 - [x] 为 API 编写 Fastify handler 测试。现已覆盖 health/readiness、任务创建校验、trace 聚合、debug 入口和错误映射。
-- [x] 为 Goal Loop 编写成功、修复成功、预算耗尽三类测试。现已显式覆盖首轮成功、repair 后成功与 `budget_limited -> needs_human` 三条主路径。
+- [x] 为 Goal Loop 编写成功、修复成功、预算耗尽三类测试。现已显式覆盖首轮成功、repair 后成功与 `budget_limited -> failed`（含过程日志）等主路径。
 
 ---
 

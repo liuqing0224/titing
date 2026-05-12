@@ -6,6 +6,7 @@ import {
   EvalResult,
   ExecutionResult,
   GovernanceRecord,
+  NeedsHumanPayload,
   PreparedWorkspace,
   QualityResult,
   TitingTask
@@ -554,8 +555,44 @@ export async function readJsonArray(path: string): Promise<Array<Record<string, 
   }
 }
 
+/**
+ * Strips Markdown link wrappers around clone URLs, e.g.
+ * `[git@host](mailto:git@host):group/repo.git` → `git@host:group/repo.git`.
+ */
+export function normalizeRepoUrl(value: string | null | undefined): string {
+  if (value == null) {
+    return "";
+  }
+  const s = value.trim();
+  if (!s) {
+    return "";
+  }
+
+  const markdownTail = /^\[([^\]]+)\]\(([^)]+)\)\s*(:\S[\S]*)?$/;
+  const match = s.match(markdownTail);
+  if (!match) {
+    return s;
+  }
+
+  const linkText = match[1].trim();
+  const href = match[2].trim();
+  const tail = (match[3] ?? "").trim();
+
+  if (linkText.startsWith("git@")) {
+    return tail.startsWith(":") ? `${linkText}${tail}` : linkText;
+  }
+  if (/^https?:\/\//i.test(href)) {
+    return href;
+  }
+  if (/^https?:\/\//i.test(linkText)) {
+    return linkText;
+  }
+
+  return linkText || s;
+}
+
 /** Canonical row → {@link TitingTask}: merges Chinese/English field aliases and seeds trace metadata defaults. */
-export function mapMeegleTask(value: unknown, index: number): TitingTask {
+export function mapMeegleTask(value: unknown, index: number, defaultExecutor = "codex"): TitingTask {
   const row = applyDescriptionFallback((value ?? {}) as Record<string, unknown>);
   const now = new Date();
   const externalId = asNonEmptyString(row.id)
@@ -571,9 +608,9 @@ export function mapMeegleTask(value: unknown, index: number): TitingTask {
     ?? asNonEmptyString(row.description)
     ?? asNonEmptyString(row.描述)
     ?? title;
-  const repo = asNonEmptyString(row.repo) ?? "";
+  const repo = normalizeRepoUrl(asNonEmptyString(row.repo) ?? "");
   const branch = asNonEmptyString(row.branch) ?? "main";
-  const executor = asNonEmptyString(row.executor) ?? "codex";
+  const executor = asNonEmptyString(row.executor) ?? defaultExecutor;
   const priority = asTaskPriority(row.priority);
   return {
     id: `meegle-${externalId}`,
@@ -609,6 +646,17 @@ export function buildMeegleResultComment(task: TitingTask, summary: string): str
   const headline = `AutoDev Agent ${status} task ${task.id}`;
   const body = summary.trim();
   return body ? `${headline}\n${truncateMeegleComment(body)}` : headline;
+}
+
+export function buildMeegleNeedsHumanComment(task: TitingTask, payload: NeedsHumanPayload): string {
+  const lines = [
+    `AutoDev Agent requires human input for task ${task.id}`,
+    payload.reason,
+    truncateMeegleComment(payload.summary.trim()),
+    `[TITING_NEEDS_HUMAN requestId=${payload.requestId} taskId=${task.id} traceId=${task.traceId}]`,
+    "Reply to this comment with the missing context to continue the task."
+  ];
+  return lines.filter(Boolean).join("\n");
 }
 
 /** Strict JSON.parse for CLI stdout; throws deterministic error when wrappers log noise before JSON payload. */
@@ -721,7 +769,7 @@ function normalizeMeegleRecord(value: unknown): Record<string, unknown> {
     id,
     title: readMeegleString(record, ["title", "name", "名称"]) ?? "",
     description: readMeegleString(record, ["description", "desc", "描述"]),
-    repo: readMeegleString(record, ["repo", "repository", "代码库", "仓库"]),
+    repo: normalizeRepoUrl(readMeegleString(record, ["repo", "repository", "代码库", "仓库"]) ?? undefined),
     branch: readMeegleString(record, ["branch", "分支"]),
     instruction: readMeegleString(record, ["instruction", "prompt", "指令"]),
     priority: readMeegleString(record, ["priority", "优先级", "status", "状态"]),
@@ -768,7 +816,7 @@ export function mergeMeegleTaskRecords(
     id: detail.id ?? listItem.id,
     title: detail.title || listItem.title,
     description: detail.description ?? listItem.description ?? null,
-    repo: detail.repo ?? listItem.repo ?? null,
+    repo: normalizeRepoUrl(asNonEmptyString(detail.repo ?? listItem.repo) ?? undefined) || null,
     branch: detail.branch ?? listItem.branch ?? null,
     instruction: detail.instruction ?? listItem.instruction ?? null,
     priority: detail.priority ?? listItem.priority ?? null,
@@ -795,7 +843,7 @@ export function applyDescriptionFallback(task: Record<string, unknown>): Record<
     const parsed = parseDescriptionBlock(description);
     return {
       ...task,
-      repo: repo || parsed.localPath || parsed.repo,
+      repo: normalizeRepoUrl(repo || parsed.localPath || parsed.repo || ""),
       branch: normalizeStoredBranch(asNonEmptyString(task.branch) || parsed.branch),
       instruction: instruction || parsed.instruction
     };
@@ -923,7 +971,7 @@ function parseDescriptionBlock(description: string): {
       continue;
     }
     if (line.startsWith("Repo:")) {
-      repo = normalizeMetadataValue(line.slice("Repo:".length));
+      repo = normalizeRepoUrl(normalizeMetadataValue(line.slice("Repo:".length)));
       continue;
     }
     if (line.startsWith("Branch:")) {

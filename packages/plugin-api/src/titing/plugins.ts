@@ -12,6 +12,25 @@ export type PluginHealth = {
   message: string;
 };
 
+export type NeedsHumanPayload = {
+  reason: string;
+  stopReason: "high_risk" | "repeated_failure" | "no_effective_diff";
+  summary: string;
+  requestId: string;
+  requestedAt: string;
+  evalResultId?: string;
+  executionId?: string;
+};
+
+export type HumanReply = {
+  taskId: string;
+  externalId: string;
+  replyId: string;
+  body: string;
+  author?: string;
+  createdAt: string;
+};
+
 export type GovernanceRecord = {
   pluginId?: string;
   phase: "before_command" | "after_command" | "after_eval";
@@ -35,6 +54,8 @@ export interface TaskIntegrationPlugin extends RuntimePlugin {
   kind: "task-integration";
   pullTasks(): Promise<TitingTask[]>;
   reportResult(task: TitingTask, summary: string): Promise<void>;
+  reportNeedsHuman?(task: TitingTask, payload: NeedsHumanPayload): Promise<void>;
+  pullHumanReplies?(tasks: TitingTask[]): Promise<HumanReply[]>;
 }
 
 export type PreparedWorkspace = {
