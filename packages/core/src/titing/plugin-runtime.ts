@@ -1,6 +1,7 @@
 import {
   EnvironmentPlugin,
   ExecutionPlugin,
+  LogPlugin,
   ObservabilityGovernancePlugin,
   PluginConfig,
   PluginKind,
@@ -48,6 +49,10 @@ export class PluginRuntime {
     );
   }
 
+  getLogPlugins(): LogPlugin[] {
+    return this.getEnabledPlugins().filter((plugin): plugin is LogPlugin => plugin.kind === "log");
+  }
+
   selectExecutionPlugin(executor: string): ExecutionPlugin {
     return this.selectByCapability("execution", executor, this.getExecutionPlugins());
   }
@@ -64,6 +69,18 @@ export class PluginRuntime {
     const selected = this.getQualityPlugins().sort((left, right) => this.getPriority(right) - this.getPriority(left))[0];
     if (!selected) {
       throw new Error("No quality plugin registered");
+    }
+    return selected;
+  }
+
+  getPrimaryQualityPlugin(): QualityPlugin | null {
+    return this.getQualityPlugins().sort((left, right) => this.getPriority(right) - this.getPriority(left))[0] ?? null;
+  }
+
+  selectLogPlugin(): LogPlugin {
+    const selected = this.getLogPlugins().sort((left, right) => this.getPriority(right) - this.getPriority(left))[0];
+    if (!selected) {
+      throw new Error("No log plugin registered");
     }
     return selected;
   }

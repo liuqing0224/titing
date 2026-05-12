@@ -142,7 +142,8 @@ export type PluginKind =
   | "execution"
   | "environment"
   | "quality"
-  | "observability-governance";
+  | "observability-governance"
+  | "log";
 
 export type CreateTaskInput = {
   source?: string;

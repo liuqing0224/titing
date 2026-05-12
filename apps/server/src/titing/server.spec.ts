@@ -84,6 +84,34 @@ describe("titing server handlers", () => {
     }
   });
 
+  it("keeps readiness green when no quality plugin is registered", async () => {
+    const state = createState({
+      listPlugins: async () => createPlugins().filter((plugin) => plugin.kind !== "quality")
+    });
+    const server = await buildServerWithState(state, { startScheduler: false });
+    try {
+      const readiness = await server.inject({ method: "GET", url: "/api/readiness" });
+
+      expect(readiness.statusCode).toBe(200);
+      expect(readiness.json()).toEqual(expect.objectContaining({
+        ok: true,
+        status: "ready",
+        checks: expect.objectContaining({
+          plugins: expect.objectContaining({
+            ok: true,
+            requiredKinds: {
+              environment: true,
+              execution: true,
+              "observability-governance": true
+            }
+          })
+        })
+      }));
+    } finally {
+      await server.close();
+    }
+  });
+
   it("validates task creation payloads before calling the service", async () => {
     const state = createState();
     const server = await buildServerWithState(state, { startScheduler: false });
@@ -458,7 +486,14 @@ function createState(overrides: Partial<RouteServiceMocks> = {}) {
     recoverAgent: async () => createAgent(),
     listPlugins: async () => createPlugins(),
     listPluginConfigs: async () => [createPluginConfig()],
-    upsertPluginConfig: async () => createPluginConfig(),
+    upsertPluginConfig: async (input) => ({
+      ...createPluginConfig(),
+      pluginId: input.pluginId,
+      kind: input.kind,
+      enabled: input.enabled,
+      priority: input.priority,
+      config: input.config
+    }),
     dashboard: async () => ({
       tasks: { total: 1, byStatus: { queued: 1 } },
       agents: { total: 1, byStatus: { idle: 1 } },

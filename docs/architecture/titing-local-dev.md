@@ -93,6 +93,13 @@ curl http://localhost:3000/api/tasks/<task-id>/observability
 curl http://localhost:3000/api/traces/<trace-id>
 ```
 
+也可以直接查看本地文件日志：
+
+```bash
+tail -f logs/tasks/<task-id>/task.log
+tail -f logs/traces/<trace-id>/trace.log
+```
+
 ## Meegle 文件型联调
 
 适用于不接真实 webhook 时的本地模拟。
@@ -165,6 +172,7 @@ curl -X POST http://localhost:3000/api/integrations/meegle/webhook \
 4. `GET /api/plugins`
 5. `GET /api/agents`
 6. 创建任务并观察详情页与 SSE
+7. 如需看原始执行输出，直接查看 `logs/tasks/<task-id>/executor/`
 
 ## 常见问题
 
@@ -187,9 +195,25 @@ curl -X POST http://localhost:3000/api/integrations/meegle/webhook \
 - 仍可通过 `POST /api/tasks/:id/needs-human` 主动置为 `needs_human`。
 - 运行 `diagnose:task`
 - 看 eval risk、repair goal、最近 logs
+- 如需排查原始执行器输出，看 `logs/tasks/<task-id>/executor/*.log`
 
 ### 任务进入 `blocked`
 
 - 环境准备失败且不可重试时，会进入 `blocked`。
 - 环境或执行阶段的自动重试预算耗尽时，也会进入 `blocked`。
 - `blocked` 不会自动恢复，通常需要人工修复依赖、repo、分支、CLI、网络或治理策略，然后调用 `POST /api/tasks/:id/recover`。
+
+### 日志文件位置
+
+当前所有业务日志统一写入仓库根目录 `logs/`：
+
+- `logs/system/system.log`
+- `logs/tasks/<taskId>/task.log`
+- `logs/tasks/<taskId>/execution-<executionId>.log`
+- `logs/tasks/<taskId>/executor/`
+- `logs/traces/<traceId>/trace.log`
+
+说明：
+
+- `/api/events`、`/api/tasks/:id/logs`、`diagnose-task` 都已改为读取文件日志
+- `execution_logs` 数据库表仍存在于 schema 中，但当前运行时不再写入

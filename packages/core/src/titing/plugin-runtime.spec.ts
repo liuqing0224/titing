@@ -2,6 +2,7 @@ import { PluginRuntime } from "./plugin-runtime";
 import {
   EnvironmentPlugin,
   ExecutionPlugin,
+  LogPlugin,
   ObservabilityGovernancePlugin,
   PluginConfig,
   QualityPlugin,
@@ -96,6 +97,15 @@ describe("PluginRuntime", () => {
     expect(runtime.selectQualityPlugin().id).toBe("quality-b");
   });
 
+  it("returns null when no quality plugin is enabled", () => {
+    const runtime = new PluginRuntime(
+      [createQualityPlugin("quality", 100)],
+      [createConfig("quality", "quality", { enabled: false })]
+    );
+
+    expect(runtime.getPrimaryQualityPlugin()).toBeNull();
+  });
+
   it("throws when no enabled plugin matches a required capability", () => {
     const runtime = new PluginRuntime(
       [
@@ -109,6 +119,15 @@ describe("PluginRuntime", () => {
       "No execution plugin registered for capability codex"
     );
     expect(runtime.getGovernancePlugins().map((plugin) => plugin.id)).toEqual(["gov"]);
+  });
+
+  it("selects the highest-priority log plugin", () => {
+    const runtime = new PluginRuntime([
+      createLogPlugin("log-a", 10),
+      createLogPlugin("log-b", 100)
+    ]);
+
+    expect(runtime.selectLogPlugin().id).toBe("log-b");
   });
 });
 
@@ -187,6 +206,19 @@ function createEnvironmentPlugin(
     },
     cleanupWorkspace: async () => undefined,
     ...overrides
+  };
+}
+
+function createLogPlugin(id: string, priority: number): LogPlugin {
+  return {
+    ...createBasePlugin(id, "log", priority, ["default"]),
+    kind: "log",
+    append: async () => undefined,
+    listByTask: async () => [],
+    listByTrace: async () => [],
+    recentEvents: async () => [],
+    snapshotEvents: () => [],
+    subscribe: () => () => undefined
   };
 }
 

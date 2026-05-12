@@ -12,6 +12,7 @@ import {
   ExecutionRepository,
   NeedsHumanPayload,
   ObservabilityCorrelation,
+  PluginConfig,
   PluginConfigRepository,
   PreparedWorkspace,
   RepairGoal,
@@ -144,6 +145,8 @@ export class TitingServices {
       throw new Error(`Task ${task.id} cannot be retried from ${task.status}`);
     }
     task.retryCount += 1;
+    task.startedAt = null;
+    task.completedAt = null;
     task.updatedAt = this.now();
     await this.deps.tasks.save(task);
     return this.transitionTask(task, "queued", "Task retried", operator);
@@ -498,7 +501,7 @@ export class TitingServices {
 
   async upsertPluginConfig(input: {
     pluginId: string;
-    kind: "task-integration" | "execution" | "environment" | "quality" | "observability-governance";
+    kind: PluginConfig["kind"];
     enabled: boolean;
     priority: number;
     config: Record<string, unknown>;
@@ -729,7 +732,7 @@ export class TitingServices {
   private async runTask(task: TitingTask, agent: AgentRecord): Promise<void> {
     const environment = this.deps.runtime.selectEnvironmentPlugin();
     const executionPlugin = this.deps.runtime.selectExecutionPlugin(task.executor);
-    const qualityPlugin = this.deps.runtime.selectQualityPlugin();
+    const qualityPlugin = this.deps.runtime.getPrimaryQualityPlugin();
     const governancePlugins = this.deps.runtime.getGovernancePlugins();
     let currentTask = task;
     let workspace: PreparedWorkspace | null = null;
@@ -776,6 +779,145 @@ export class TitingServices {
         if (retriedTask) {
           currentTask = retriedTask;
           break;
+        }
+
+        if (!qualityPlugin) {
+          const correlation = this.buildCorrelation({ task: currentTask, execution, agentId: agent.id });
+          await this.appendExecutionLog(
+            currentTask,
+            execution,
+            "execution.quality_skipped",
+            "Quality plugin disabled; skipping evaluation",
+            {
+              sessionId: result.sessionId,
+              qualityEnabled: false
+            },
+            correlation
+          );
+          await this.publish(
+            "execution.quality_skipped",
+            "Quality plugin disabled; skipping evaluation",
+            currentTask,
+            {
+              executionId: execution.id,
+              qualityEnabled: false,
+              sessionId: result.sessionId
+            },
+            { execution, correlation }
+          );
+
+          if (result.exitCode === 0) {
+            await this.reportTaskResultIfNeeded(currentTask, result.summary);
+            if (goal) {
+              await this.deps.repairGoals.upsert({
+                ...goal,
+                status: "achieved",
+                updatedAt: this.now()
+              });
+            }
+            await this.updateExecutionStatus(execution, currentTask, "completed", "Execution completed without quality evaluation", {
+              sessionId: result.sessionId,
+              qualityEnabled: false
+            });
+            currentTask = await this.transitionTask(
+              currentTask,
+              "done",
+              "Execution completed without quality evaluation",
+              executionPlugin.id,
+              execution
+            );
+            currentTask.completedAt = this.now();
+            await this.deps.tasks.save(currentTask);
+            break;
+          }
+
+          const failureHash = buildFailureHash(result, []);
+          repeatedFailureCount = failureHash === previousFailureHash ? repeatedFailureCount + 1 : 1;
+          previousFailureHash = failureHash;
+          loopCount += 1;
+          const stopReason = decideStopReasonWithoutQuality({
+            repeatedFailureCount,
+            iteration: loopCount,
+            maxIterations: goal?.maxIterations ?? this.maxRepairIterations
+          });
+          const nextGoalStatus: RepairGoal["status"] = stopReason === "budget_limited" ? "budget_limited" : "repairing";
+          const nextGoal: RepairGoal = {
+            id: goal?.id ?? this.createId(),
+            taskId: currentTask.id,
+            objective: buildRepairObjective(currentTask, result, []),
+            constraints: [...currentTask.constraints],
+            doneWhen: buildRepairDoneWhenWithoutQuality(currentTask),
+            status: nextGoalStatus,
+            currentIteration: loopCount,
+            maxIterations: goal?.maxIterations ?? this.maxRepairIterations,
+            lastFailureHash: failureHash,
+            createdAt: goal?.createdAt ?? this.now(),
+            updatedAt: this.now()
+          };
+          goal = nextGoal;
+          await this.deps.repairGoals.upsert(goal);
+
+          if (stopReason === "budget_limited") {
+            const summary = describeStopReason(stopReason);
+            await this.appendExecutionLog(
+              currentTask,
+              execution,
+              "goal.budget_exhausted",
+              summary,
+              {
+                stopReason,
+                iteration: loopCount,
+                maxIterations: nextGoal.maxIterations,
+                qualityEnabled: false
+              },
+              this.buildCorrelation({ task: currentTask, execution, agentId: agent.id })
+            );
+            await this.updateExecutionStatus(execution, currentTask, "failed", summary, {
+              iteration: loopCount,
+              maxIterations: nextGoal.maxIterations,
+              stopReason,
+              qualityEnabled: false
+            });
+            currentTask = await this.transitionTask(currentTask, "failed", summary, executionPlugin.id, execution);
+            currentTask.completedAt = this.now();
+            await this.deps.tasks.save(currentTask);
+            await this.reportTaskResultIfNeeded(currentTask, summary);
+            break;
+          }
+
+          if (stopReason) {
+            await this.appendExecutionLog(
+              currentTask,
+              execution,
+              "goal.stop_reason_continued",
+              `Continuing repair after stop signal: ${stopReason}`,
+              {
+                stopReason,
+                iteration: loopCount,
+                maxIterations: nextGoal.maxIterations,
+                qualityEnabled: false
+              },
+              this.buildCorrelation({ task: currentTask, execution, agentId: agent.id })
+            );
+          }
+
+          await this.updateExecutionStatus(execution, currentTask, "repairing", "Execution requires repair without quality evaluation", {
+            sessionId: result.sessionId,
+            errorCategory: result.errorCategory,
+            qualityEnabled: false
+          });
+          if (currentTask.status !== "repairing") {
+            currentTask = await this.transitionTask(currentTask, "repairing", "Execution failed", executionPlugin.id, execution);
+          }
+          currentTask.repairCount = loopCount;
+          await this.deps.tasks.save(currentTask);
+          await this.publish("goal.iteration_started", "Repair iteration started", currentTask, {
+            iteration: loopCount,
+            objective: nextGoal.objective,
+            sessionId: result.sessionId
+          });
+          previousResult = result;
+          continue;
         }
 
         await this.updateExecutionStatus(execution, currentTask, "evaluating", "Execution output ready for evaluation", {
@@ -1546,6 +1688,20 @@ function decideStopReason(input: {
   return null;
 }
 
+function decideStopReasonWithoutQuality(input: {
+  repeatedFailureCount: number;
+  iteration: number;
+  maxIterations: number;
+}): "repeated_failure" | "budget_limited" | null {
+  if (input.iteration >= input.maxIterations) {
+    return "budget_limited";
+  }
+  if (input.repeatedFailureCount >= 2) {
+    return "repeated_failure";
+  }
+  return null;
+}
+
 function describeStopReason(reason: "high_risk" | "repeated_failure" | "no_effective_diff" | "budget_limited"): string {
   switch (reason) {
     case "high_risk":
@@ -1610,6 +1766,10 @@ function buildRepairDoneWhen(
     return [...task.acceptanceCriteria, ...failedChecks];
   }
   return failedChecks.length > 0 ? failedChecks : ["All checks pass"];
+}
+
+function buildRepairDoneWhenWithoutQuality(task: TitingTask): string[] {
+  return task.acceptanceCriteria.length > 0 ? [...task.acceptanceCriteria] : ["Successful execution"];
 }
 
 function readQualityChecks(report: Record<string, unknown>): Array<{ name: string; passed: boolean; detail: string }> {

@@ -1,4 +1,5 @@
 import { createDatabase } from "./database";
+import { RootLogsPlugin } from "./plugins";
 
 type DiagnosisArgs = {
   taskId?: string;
@@ -14,7 +15,9 @@ async function main(): Promise<void> {
   }
 
   const database = createDatabase();
+  const logsPlugin = new RootLogsPlugin();
   try {
+    await logsPlugin.init();
     const task = await loadTask(database.pool, args);
     if (!task) {
       throw new Error(args.taskId
@@ -31,10 +34,17 @@ async function main(): Promise<void> {
         "select * from executions where task_id = $1 order by started_at desc limit 5",
         [task.id]
       ),
-      database.pool.query(
-        "select * from execution_logs where task_id = $1 order by created_at desc limit 20",
-        [task.id]
-      ),
+      logsPlugin.listByTask(String(task.id), 20).then((items) => ({
+        rows: items.map((item) => ({
+          id: item.id,
+          task_id: item.taskId,
+          execution_id: item.executionId,
+          event_type: item.eventType,
+          message: item.message,
+          created_at: item.createdAt.toISOString(),
+          data_json: JSON.stringify(item.data)
+        }))
+      })),
       database.pool.query(
         "select * from eval_results where task_id = $1 order by created_at desc limit 5",
         [task.id]

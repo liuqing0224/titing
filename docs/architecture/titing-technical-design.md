@@ -206,9 +206,9 @@ Transitions are only legal through the state machine. Every transition emits a s
 The controller executes:
 
 1. run execution plugin
-2. run quality plugin
-3. if eval passes, mark done
-4. if eval fails, create or update repair goal
+2. if quality plugin is enabled, run quality plugin
+3. if eval passes, or quality is disabled and execution succeeds, mark done
+4. if eval fails, or quality is disabled and execution is non-retryably unsuccessful, create or update repair goal
 5. re-run execution with repair context
 6. repeat until success or stop condition
 

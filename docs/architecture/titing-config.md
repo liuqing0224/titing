@@ -32,6 +32,7 @@ type ServerConfig = {
       codexBin: string;
       cursorBin: string;
     };
+    log: {};
     meegle: {
       mode: "polling" | "webhook";
       tasksFile: string | null;
@@ -72,7 +73,7 @@ type ServerConfig = {
 | --- | --- | --- | --- |
 | `TITING_WORKSPACE_ROOT` | `.titing/workspaces` | - | task worktree 根目录 |
 | `TITING_WORKSPACE_REPO_CACHE_ROOT` | `.titing/repos` | `TITING_REPO_CACHE_ROOT` | bare mirror cache 根目录 |
-| `TITING_WORKSPACE_CLEANUP_ON_SUCCESS` | `true` | `TITING_CLEANUP_ON_SUCCESS` | 成功后是否删除 workspace |
+| `TITING_WORKSPACE_CLEANUP_ON_SUCCESS` | `false` | `TITING_CLEANUP_ON_SUCCESS` | 成功后是否删除 workspace |
 | `TITING_WORKSPACE_CLEANUP_ON_FAILURE` | `false` | `TITING_CLEANUP_ON_FAILURE` | 失败后是否删除 workspace |
 
 ### Goal Recovery
@@ -127,3 +128,23 @@ Webhook API:
 
 - 新配置名优先，旧 env 名作为 fallback 继续兼容。
 - 推荐后续新增配置一律使用结构化前缀，不再扩散扁平命名。
+
+## 日志落盘
+
+当前服务端已内置根目录文件日志插件，默认把日志写入：
+
+```text
+logs/
+  system/system.log
+  tasks/<taskId>/task.log
+  tasks/<taskId>/execution-<executionId>.log
+  tasks/<taskId>/executor/<executionId>-stdout.log
+  tasks/<taskId>/executor/<executionId>-stderr.log
+  tasks/<taskId>/executor/<executionId>-summary.log
+  traces/<traceId>/trace.log
+```
+
+说明：
+
+- 当前没有额外的 env 用于切换日志目标目录，默认固定为仓库根目录 `logs/`
+- 业务日志查询接口读取的是上述文件，而不是数据库 `execution_logs` 表

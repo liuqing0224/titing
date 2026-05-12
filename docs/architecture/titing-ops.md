@@ -18,6 +18,8 @@
 - 已注册插件与健康状态
 - scheduler interval 和 seed agent 数
 
+当前业务日志默认落到仓库根目录 `logs/`，而不是数据库 `execution_logs` 表。
+
 建议把以下场景打成明确 error 日志：
 
 - 数据库连接失败
@@ -69,6 +71,11 @@ npm run diagnose:task -w apps/server -- --external-id <external-id> --source mee
 - 最近状态流转与最近 execution logs
 - 推断的 stop reason，例如 `repair_budget_exhausted`、`high_risk_eval`
 
+底层说明：
+
+- `diagnose-task` 当前会继续查询数据库中的任务、执行、评测、repair goal、transition 主记录
+- recent logs 已改为读取 `logs/tasks/<task-id>/task.log`
+
 如需结构化输出，附加 `--json`：
 
 ```bash
@@ -82,6 +89,7 @@ npm run diagnose:task -w apps/server -- --task-id <task-id> --json
 3. 任务卡在 `needs_human`：运行 `diagnose:task`，重点看失败 checks、risk level 和 repair goal。
 4. 外部任务未进系统：看 integration health，再检查 `source + externalId` 是否已存在。
 5. Webhook 没生效：检查 `GET /api/integrations/meegle/health`，确认 mode 为 `webhook` 且 secret configured。
+6. 需要看原始执行器输出：直接查看 `logs/tasks/<task-id>/executor/`
 
 ## 数据修复手册
 
@@ -109,6 +117,15 @@ npm run migration:legacy -w apps/server
 
 ```bash
 npm run diagnose:task -w apps/server -- --task-id <task-id> --json
+```
+
+### 查看文件日志
+
+```bash
+tail -f logs/system/system.log
+tail -f logs/tasks/<task-id>/task.log
+tail -f logs/traces/<trace-id>/trace.log
+ls logs/tasks/<task-id>/executor
 ```
 
 ### 手工恢复任务

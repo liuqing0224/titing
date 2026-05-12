@@ -12,14 +12,14 @@ import {
 import { NotFoundError, PluginRuntime, TitingServices } from "@titing/core";
 import { readConfig, ServerConfig } from "./config";
 import { createDatabase, DatabaseClient } from "./database";
-import { InMemoryEventStream } from "./event-stream";
+import { EventStreamView } from "./event-stream";
 import { isHttpRoutePlugin } from "./http-plugin";
+import { FileExecutionLogRepository, FileLogEventStream } from "./log-adapters";
 import { runMigrations } from "./migration-runner";
 import { verifyDatabaseConnection } from "./startup-errors";
 import {
   PgAgentRepository,
   PgEvalResultRepository,
-  PgExecutionLogRepository,
   PgExecutionRepository,
   PgPluginConfigRepository,
   PgRepairGoalRepository,
@@ -67,7 +67,7 @@ type ServerPool = DatabaseClient;
 
 type BootstrapState = {
   services: RouteServices;
-  events: InMemoryEventStream;
+  events: EventStreamView;
   pool: ServerPool;
   config: ServerConfig;
   plugins: RuntimePlugin[];
@@ -86,14 +86,15 @@ export async function buildServer(config: ServerConfig = readConfig()) {
   const tasks = new PgTaskRepository(database.pool);
   const taskTransitions = new PgTaskTransitionRepository(database.pool);
   const executions = new PgExecutionRepository(database.pool);
-  const executionLogs = new PgExecutionLogRepository(database.pool);
   const agents = new PgAgentRepository(database.pool);
   const repairGoals = new PgRepairGoalRepository(database.pool);
   const evalResults = new PgEvalResultRepository(database.pool);
   const pluginConfigs: PluginConfigRepository = new PgPluginConfigRepository(database.pool);
-  const events = new InMemoryEventStream();
   const runtime = new PluginRuntime(createBuiltinPlugins(config), await pluginConfigs.list());
   await runtime.init();
+  const logPlugin = runtime.selectLogPlugin();
+  const events = new FileLogEventStream(logPlugin);
+  const executionLogs = new FileExecutionLogRepository(logPlugin);
 
   const services = new TitingServices({
     tasks,
@@ -305,7 +306,7 @@ function wireRoutes(fastify: FastifyInstance, state: BootstrapState): void {
   fastify.post("/api/plugin-configs", async (request: FastifyRequest) => {
     const body = request.body as {
       pluginId: string;
-      kind: "task-integration" | "execution" | "environment" | "quality" | "observability-governance";
+      kind: "task-integration" | "execution" | "environment" | "quality" | "observability-governance" | "log";
       enabled: boolean;
       priority: number;
       config?: Record<string, unknown>;
@@ -479,7 +480,6 @@ function evaluatePluginReadiness(
   const requiredKinds = {
     environment: plugins.some((plugin) => plugin.kind === "environment" && plugin.health.healthy),
     execution: plugins.some((plugin) => plugin.kind === "execution" && plugin.health.healthy),
-    quality: plugins.some((plugin) => plugin.kind === "quality" && plugin.health.healthy),
     "observability-governance": plugins.some(
       (plugin) => plugin.kind === "observability-governance" && plugin.health.healthy
     )

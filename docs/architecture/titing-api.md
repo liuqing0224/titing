@@ -13,6 +13,7 @@ http://localhost:3000/api
 - 所有请求和响应均为 JSON，除 SSE 端点外。
 - 任务相关聚合响应会带 `schemaVersion`，当前值与 `TitingServices.OBSERVABILITY_SCHEMA_VERSION` 一致。
 - 失败响应统一形如 `{ "error": "..." }`。
+- 运行时日志现统一写入仓库根目录 `logs/`；`/api/events`、`/api/tasks/:id/logs` 等接口已改为读取文件日志插件，而不是 `execution_logs` 数据库表。
 
 ## Health
 
@@ -58,7 +59,6 @@ http://localhost:3000/api
       "requiredKinds": {
         "environment": true,
         "execution": true,
-        "quality": true,
         "observability-governance": true
       },
       "items": []
@@ -190,6 +190,10 @@ http://localhost:3000/api
 
 查询任务 execution logs。
 
+说明：
+
+- 当前返回结构保持兼容，但底层数据源来自 `logs/tasks/<task-id>/task.log` 等文件日志，而不是数据库 `execution_logs` 表。
+
 ### `GET /tasks/:id/observability`
 
 查询聚合观测视图。
@@ -224,6 +228,10 @@ http://localhost:3000/api
 - `executionLogs`
 - `evalResults`
 - `repairGoals`
+
+说明：
+
+- `executionLogs` 字段当前由 `logs/traces/<traceId>/trace.log` 和 task 级文件日志聚合得到。
 
 ## Agents
 
@@ -341,6 +349,11 @@ x-titing-webhook-secret: <secret>
 ### `GET /events`
 
 SSE 事件流端点。
+
+说明：
+
+- SSE 实时事件现在由文件日志插件维护的最近事件快照与订阅流提供。
+- 事件仍保持原有 payload shape，但不再依赖内存事件流作为唯一数据源。
 
 事件格式：
 

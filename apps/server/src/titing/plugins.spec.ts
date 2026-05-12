@@ -10,7 +10,8 @@ import {
   DefaultQualityPlugin,
   EnvironmentPreparationError,
   MeegleTaskIntegrationPlugin,
-  LocalWorktreeEnvironmentPlugin
+  LocalWorktreeEnvironmentPlugin,
+  RootLogsPlugin
 } from "./plugins";
 import { ServerConfig } from "./config";
 import { mapMeegleTask, normalizeRepoUrl } from "./plugins/shared";
@@ -381,6 +382,47 @@ describe("DefaultObservabilityGovernancePlugin", () => {
         outcome: "blocked"
       })
     ]);
+  });
+});
+
+describe("RootLogsPlugin", () => {
+  it("writes task, trace, and executor logs into the root logs directory", async () => {
+    const sandbox = await mkdtemp(join(tmpdir(), "titing-logs-"));
+    const previousCwd = process.cwd();
+    try {
+      process.chdir(sandbox);
+      const plugin = new RootLogsPlugin();
+      await plugin.init();
+
+      await plugin.append({
+        id: "log-1",
+        createdAt: new Date("2026-05-11T00:00:00.000Z"),
+        level: "info",
+        channel: "execution_log",
+        eventType: "executor.completed",
+        message: "Execution completed",
+        taskId: "task-1",
+        traceId: "trace-1",
+        executionId: "execution-1",
+        data: {
+          correlation: { traceId: "trace-1" },
+          stdout: "hello stdout",
+          stderr: "hello stderr",
+          summary: "hello summary"
+        }
+      });
+
+      const taskLog = await readFile(join(sandbox, "logs", "tasks", "task-1", "task.log"), "utf8");
+      const traceLog = await readFile(join(sandbox, "logs", "traces", "trace-1", "trace.log"), "utf8");
+      const executionLog = await readFile(join(sandbox, "logs", "tasks", "task-1", "execution-execution-1.log"), "utf8");
+
+      expect(taskLog).toContain("\"eventType\":\"executor.completed\"");
+      expect(traceLog).toContain("\"traceId\":\"trace-1\"");
+      expect(executionLog).toContain("\"executionId\":\"execution-1\"");
+    } finally {
+      process.chdir(previousCwd);
+      await rm(sandbox, { recursive: true, force: true });
+    }
   });
 });
 

@@ -1,4 +1,5 @@
 import {
+  ExecutionLogRecord,
   EvalResult,
   PluginConfig,
   PluginKind,
@@ -6,6 +7,7 @@ import {
   RiskLevel,
   TitingTask
 } from "./models";
+import { ObservabilityEvent } from "./events";
 
 export type PluginHealth = {
   healthy: boolean;
@@ -39,6 +41,21 @@ export type GovernanceRecord = {
   findings: string[];
   metadata: Record<string, unknown>;
   recordedAt: string;
+};
+
+export type LogEntry = {
+  id: string;
+  createdAt: Date;
+  level: "debug" | "info" | "warn" | "error";
+  channel: "event" | "execution_log" | "executor_stdout" | "executor_stderr" | "executor_summary";
+  eventType: string;
+  message: string;
+  traceId?: string;
+  taskId?: string;
+  executionId?: string | null;
+  pluginId?: string;
+  agentId?: string;
+  data: Record<string, unknown>;
 };
 
 export interface RuntimePlugin {
@@ -128,4 +145,14 @@ export interface ObservabilityGovernancePlugin extends RuntimePlugin {
   afterEval?(result: EvalResult): Promise<void>;
   redact?(value: string): string;
   getRecords?(): GovernanceRecord[];
+}
+
+export interface LogPlugin extends RuntimePlugin {
+  kind: "log";
+  append(entry: LogEntry): Promise<void>;
+  listByTask(taskId: string, limit?: number): Promise<ExecutionLogRecord[]>;
+  listByTrace(traceId: string, limit?: number): Promise<ExecutionLogRecord[]>;
+  recentEvents(limit?: number): Promise<ObservabilityEvent[]>;
+  snapshotEvents(limit?: number): ObservabilityEvent[];
+  subscribe(listener: (event: ObservabilityEvent) => void): () => void;
 }

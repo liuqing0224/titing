@@ -67,7 +67,7 @@ export const CONFIG_DEFAULTS = {
   workspace: {
     root: ".titing/workspaces",
     repoCacheRoot: ".titing/repos",
-    cleanupOnSuccess: true,
+    cleanupOnSuccess: false,
     cleanupOnFailure: false
   },
   goalRecovery: {

@@ -231,6 +231,7 @@ export default function App() {
   const [taskQuery, setTaskQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [eventCategoryFilter, setEventCategoryFilter] = useState<EventCategory>("all");
+  const [togglingPluginId, setTogglingPluginId] = useState<string | null>(null);
 
   useEffect(() => {
     void refreshAll();
@@ -342,6 +343,8 @@ export default function App() {
   const selectedPluginConfig = selectedPlugin
     ? pluginConfigs.find((config) => config.pluginId === selectedPlugin.id) ?? null
     : null;
+  const selectedPluginEnabled = selectedPluginConfig?.enabled ?? true;
+  const selectedPluginToggleBlocked = selectedPlugin ? isPluginToggleBlocked(selectedPlugin.kind) : false;
 
   async function refreshAll(): Promise<void> {
     setIsRefreshing(true);
@@ -426,6 +429,26 @@ export default function App() {
         status: "failed",
         message: authError instanceof Error ? authError.message : String(authError)
       });
+    }
+  }
+
+  async function togglePluginEnabled(plugin: Plugin, nextEnabled: boolean): Promise<void> {
+    setTogglingPluginId(plugin.id);
+    try {
+      const currentConfig = pluginConfigs.find((config) => config.pluginId === plugin.id) ?? null;
+      await postJson("/plugin-configs", {
+        pluginId: plugin.id,
+        kind: plugin.kind,
+        enabled: nextEnabled,
+        priority: currentConfig?.priority ?? plugin.priority,
+        config: currentConfig?.config ?? {}
+      });
+      await refreshAll();
+      setDetailError(null);
+    } catch (toggleError) {
+      setDetailError(toggleError instanceof Error ? toggleError.message : String(toggleError));
+    } finally {
+      setTogglingPluginId((current) => (current === plugin.id ? null : current));
     }
   }
 
@@ -967,6 +990,28 @@ export default function App() {
                   {selectedPluginConfig?.priority ?? selectedPlugin.priority}
                 </p>
                 <p>{selectedPlugin.health.message}</p>
+                <div className="config-block">
+                  <div className="subpanel-header">
+                    <p className="eyebrow compact">Plugin Controls</p>
+                    <span className={`badge ${selectedPluginEnabled ? "status-done" : "status-blocked"}`}>
+                      {selectedPluginEnabled ? "enabled" : "disabled"}
+                    </span>
+                  </div>
+                  {selectedPluginToggleBlocked ? (
+                    <p className="meta">Required plugin; toggling disabled in console.</p>
+                  ) : (
+                    <button
+                      className={selectedPluginEnabled ? "secondary-button" : "primary-button"}
+                      disabled={togglingPluginId === selectedPlugin.id}
+                      onClick={() => void togglePluginEnabled(selectedPlugin, !selectedPluginEnabled)}
+                      type="button"
+                    >
+                      {togglingPluginId === selectedPlugin.id
+                        ? (selectedPluginEnabled ? "Disabling..." : "Enabling...")
+                        : (selectedPluginEnabled ? "Disable Plugin" : "Enable Plugin")}
+                    </button>
+                  )}
+                </div>
                 {selectedPlugin.id === "meegle" ? (
                   <div className="config-block">
                     <div className="subpanel-header">
@@ -1094,6 +1139,10 @@ function buildStatusFilters(counts: Record<string, number>): Array<{ value: stri
       count: status === "all" ? Object.values(counts).reduce((sum, value) => sum + value, 0) : counts[status] ?? 0
     }))
     .filter((item) => item.value === "all" || item.count > 0);
+}
+
+function isPluginToggleBlocked(kind: string): boolean {
+  return kind === "environment" || kind === "log";
 }
 
 function buildEventCategoryFilters(counts: Record<string, number>): Array<{ value: EventCategory; label: string; count: number }> {

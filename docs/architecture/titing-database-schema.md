@@ -94,9 +94,14 @@ npm run migration:run -w apps/server
 - `started_at`
 - `ended_at`
 
+说明：
+
+- `summary` 仍保留在执行主记录中，用于快速展示最近执行结果。
+- 详细 stdout / stderr / summary 原始日志不再作为数据库日志持久化来源，而是统一写入根目录 `logs/`。
+
 ### `execution_logs`
 
-执行日志和结构化事件记录。
+历史上的执行日志和结构化事件记录表。
 
 关键字段：
 
@@ -107,6 +112,12 @@ npm run migration:run -w apps/server
 - `message`
 - `data_json`
 - `created_at`
+
+当前状态：
+
+- 该表和相关索引仍保留在 schema 中，以兼容已有数据库与历史迁移。
+- 新版本运行时不再向该表写入日志。
+- 任务日志、trace 日志、SSE 初始快照与执行器输出已统一迁移到根目录 `logs/` 文件体系。
 
 ### `agents`
 
@@ -185,12 +196,15 @@ Goal Loop 修复目标表。
 - `tasks.constraints_json`
 - `tasks.acceptance_criteria_json`
 - `tasks.metadata_json`
-- `execution_logs.data_json`
 - `agents.labels_json`
 - `repair_goals.constraints_json`
 - `repair_goals.done_when_json`
 - `eval_results.report_json`
 - `plugin_configs.config_json`
+
+补充说明：
+
+- `execution_logs.data_json` 仍是旧表定义的一部分，但当前文件日志方案不再依赖该字段作为主数据源。
 
 示例：
 
@@ -242,4 +256,3 @@ npm run migration:legacy -w apps/server
 2. 重命名为 `legacy_*`。
 3. 运行当前 SQLite migrations。
 4. 回填到新 schema。
-

@@ -1,6 +1,11 @@
 import { EventSink, ObservabilityEvent } from "@titing/plugin-api";
 
-export class InMemoryEventStream implements EventSink {
+export interface EventStreamView extends EventSink {
+  subscribe(listener: (event: ObservabilityEvent) => void): () => void;
+  snapshot(): ObservabilityEvent[];
+}
+
+export class InMemoryEventStream implements EventStreamView {
   private readonly listeners = new Set<(event: ObservabilityEvent) => void>();
   private readonly recentEvents: ObservabilityEvent[] = [];
 

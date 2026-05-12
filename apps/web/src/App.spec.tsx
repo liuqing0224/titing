@@ -126,6 +126,15 @@ describe("App", () => {
         ]);
       }
       if (url.endsWith("/plugin-configs")) {
+        if (input instanceof Request && input.method === "POST") {
+          return jsonResponse({
+            pluginId: "meegle",
+            kind: "task-integration",
+            enabled: false,
+            priority: 30,
+            config: { mode: "poll" }
+          });
+        }
         return jsonResponse([
           {
             pluginId: "meegle",
@@ -333,8 +342,175 @@ describe("App", () => {
     await screen.findByText("credentials missing");
     expect(screen.getAllByText("meegle").length).toBeGreaterThan(0);
     expect(screen.getByText(/enabled true · priority 30/i)).not.toBeNull();
+    expect(screen.getByRole("button", { name: /disable plugin/i })).not.toBeNull();
     expect(screen.getByText(/One or more required plugin kinds are unhealthy/i)).not.toBeNull();
     expect(screen.getByText(/"mode": "poll"/i)).not.toBeNull();
+  });
+
+  it("posts plugin config updates when disabling a safe plugin", async () => {
+    render(<App />);
+
+    await screen.findByText("credentials missing");
+    fireEvent.click(screen.getByRole("button", { name: /disable plugin/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/plugin-configs"),
+        expect.objectContaining({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            pluginId: "meegle",
+            kind: "task-integration",
+            enabled: false,
+            priority: 30,
+            config: { mode: "poll" }
+          })
+        })
+      );
+    });
+  });
+
+  it("allows toggling quality plugins in the console", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/dashboard")) {
+        return jsonResponse({
+          tasks: { total: 0, byStatus: {} },
+          agents: { total: 0, byStatus: {} },
+          plugins: { total: 1, healthy: 1 }
+        });
+      }
+      if (url.endsWith("/ops/events")) {
+        return jsonResponse({
+          focusEventTypes: [],
+          watchedEventCount: 0,
+          eventTypeCounts: {},
+          eventTypeRanking: [],
+          recentWatchedEvents: [],
+          recentAbnormalTasks: []
+        });
+      }
+      if (url.endsWith("/tasks")) {
+        return jsonResponse([]);
+      }
+      if (url.endsWith("/agents")) {
+        return jsonResponse([]);
+      }
+      if (url.endsWith("/plugins")) {
+        return jsonResponse([
+          {
+            id: "default-quality",
+            kind: "quality",
+            priority: 100,
+            capabilities: ["default"],
+            health: {
+              healthy: true,
+              message: "Script-based quality gate enabled"
+            }
+          }
+        ]);
+      }
+      if (url.endsWith("/plugin-configs")) {
+        if (init?.method === "POST") {
+          return jsonResponse({
+            pluginId: "default-quality",
+            kind: "quality",
+            enabled: false,
+            priority: 100,
+            config: {}
+          });
+        }
+        return jsonResponse([]);
+      }
+      if (url.endsWith("/readiness")) {
+        return jsonResponse({
+          ok: true,
+          status: "ready",
+          checks: {
+            plugins: {
+              ok: true,
+              message: "All required plugin kinds are healthy",
+              requiredKinds: {}
+            }
+          }
+        });
+      }
+      throw new Error(`Unhandled fetch: ${url}`);
+    });
+
+    render(<App />);
+
+    await screen.findByText("Script-based quality gate enabled");
+    expect(screen.getByRole("button", { name: /disable plugin/i })).not.toBeNull();
+  });
+
+  it("blocks toggling for required plugins in the console", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/dashboard")) {
+        return jsonResponse({
+          tasks: { total: 0, byStatus: {} },
+          agents: { total: 0, byStatus: {} },
+          plugins: { total: 1, healthy: 1 }
+        });
+      }
+      if (url.endsWith("/ops/events")) {
+        return jsonResponse({
+          focusEventTypes: [],
+          watchedEventCount: 0,
+          eventTypeCounts: {},
+          eventTypeRanking: [],
+          recentWatchedEvents: [],
+          recentAbnormalTasks: []
+        });
+      }
+      if (url.endsWith("/tasks")) {
+        return jsonResponse([]);
+      }
+      if (url.endsWith("/agents")) {
+        return jsonResponse([]);
+      }
+      if (url.endsWith("/plugins")) {
+        return jsonResponse([
+          {
+            id: "default-environment",
+            kind: "environment",
+            priority: 100,
+            capabilities: ["local"],
+            health: {
+              healthy: true,
+              message: "Workspace environment ready"
+            }
+          }
+        ]);
+      }
+      if (url.endsWith("/plugin-configs")) {
+        return jsonResponse([]);
+      }
+      if (url.endsWith("/readiness")) {
+        return jsonResponse({
+          ok: true,
+          status: "ready",
+          checks: {
+            plugins: {
+              ok: true,
+              message: "All required plugin kinds are healthy",
+              requiredKinds: {
+                environment: true
+              }
+            }
+          }
+        });
+      }
+      throw new Error(`Unhandled fetch: ${url}`);
+    });
+
+    render(<App />);
+
+    await screen.findByText("Workspace environment ready");
+    expect(screen.queryByRole("button", { name: /disable plugin/i })).toBeNull();
+    expect(screen.getByText(/Required plugin; toggling disabled in console\./i)).not.toBeNull();
   });
 
   it("opens the Meegle authorization URL and polls until authorized", async () => {

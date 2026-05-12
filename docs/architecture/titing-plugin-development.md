@@ -13,6 +13,7 @@ Titing 当前支持以下插件类型：
 - `environment`
 - `quality`
 - `observability-governance`
+- `log`
 
 每类插件都至少需要这些字段：
 
@@ -105,7 +106,22 @@ Titing 当前支持以下插件类型：
 
 - `beforeCommand()` 阻断时要返回清晰原因
 - `redact()` 不能破坏 JSON 基本可读性
-- 治理记录应可关联到 `execution_logs` 和 SSE
+- 治理记录应可关联到文件日志与 SSE
+
+### Log
+
+职责：
+
+- 接收统一结构化日志事件
+- 把 task / trace / execution / executor 输出落盘到根目录 `logs/`
+- 为 SSE、ops 聚合、task 日志查询提供统一读取入口
+
+关键要求：
+
+- 插件必须支持 `append()`、按 task/trace 查询、最近事件快照和订阅
+- 日志文件格式统一为 JSON Lines
+- `stdout / stderr / summary` 等执行器输出必须通过该插件写入 `logs/tasks/<taskId>/executor/`
+- 无 `taskId` 的系统级事件也必须有稳定落盘位置，避免只存在内存
 
 ## 注册方式
 
@@ -154,4 +170,4 @@ Titing 当前支持以下插件类型：
 - 插件不要直接写 SQLite 表，统一经由 service/repository。
 - 插件不要自行维护任务状态机。
 - 外部系统的幂等与重试语义，要通过 `source + externalId`、结构化日志和 service 层状态机收敛。
-
+- 日志插件是唯一文件日志入口；不要在其他插件里直接向 `logs/` 写业务日志文件。

@@ -499,6 +499,29 @@ describe("TitingServices", () => {
     expect(recoveryHarness.agent.status).toBe("idle");
   });
 
+  it("retries failed tasks back to queued and clears execution timestamps", async () => {
+    const failedTask = createTask({ id: "task-7b", status: "failed" });
+    failedTask.startedAt = new Date("2026-05-11T00:10:00.000Z");
+    failedTask.completedAt = new Date("2026-05-11T00:20:00.000Z");
+    const harness = createHarness({
+      tasks: [failedTask],
+      executions: []
+    });
+
+    const retried = await harness.services.retryTask("task-7b", "api");
+
+    expect(retried.status).toBe("queued");
+    expect(retried.retryCount).toBe(1);
+    expect(retried.startedAt).toBeNull();
+    expect(retried.completedAt).toBeNull();
+    expect(harness.tasks.get("task-7b")).toEqual(expect.objectContaining({
+      status: "queued",
+      retryCount: 1,
+      startedAt: null,
+      completedAt: null
+    }));
+  });
+
   it("skips overlapping scheduler ticks while one is already in flight", async () => {
     let releaseExecution: (() => void) | undefined;
     const harness = createHarness({
@@ -609,6 +632,97 @@ describe("TitingServices", () => {
       "running->blocked"
     ]);
     expect(harness.events.map((item) => item.eventType)).toContain("execution.blocked");
+  });
+
+  it("completes tasks without evaluating when no quality plugin is enabled and execution succeeds", async () => {
+    const harness = createHarness({
+      tasks: [createTask({ id: "task-10c", status: "queued" })],
+      executions: [createExecutionResult({ summary: "done without quality" })],
+      qualityEnabled: false
+    });
+
+    await harness.services.runSchedulerTick();
+
+    expect(harness.tasks.get("task-10c")?.status).toBe("done");
+    expect(harness.qualityPlugin.calls).toEqual([]);
+    expect(harness.evalResults).toEqual([]);
+    expect(harness.transitions.map((item) => `${item.from}->${item.to}`)).toEqual([
+      "queued->running",
+      "running->done"
+    ]);
+    expect(harness.logs.some((item) => item.eventType === "execution.quality_skipped")).toBe(true);
+  });
+
+  it("repairs without evaluating when no quality plugin is enabled", async () => {
+    const harness = createHarness({
+      tasks: [createTask({ id: "task-10d", status: "queued" })],
+      executions: [
+        createExecutionResult({
+          exitCode: 1,
+          errorCategory: "command_failed",
+          summary: "build failed",
+          sessionId: "codex:s1"
+        }),
+        createExecutionResult({
+          exitCode: 0,
+          errorCategory: "none",
+          summary: "recovered",
+          sessionId: "codex:s1"
+        })
+      ],
+      qualityEnabled: false
+    });
+
+    await harness.services.runSchedulerTick();
+
+    expect(harness.tasks.get("task-10d")?.status).toBe("done");
+    expect(harness.evalResults).toEqual([]);
+    expect(harness.transitions.map((item) => `${item.from}->${item.to}`)).toEqual([
+      "queued->running",
+      "running->repairing",
+      "repairing->done"
+    ]);
+    expect(harness.repairGoals.get("task-10d")).toEqual(expect.objectContaining({
+      status: "achieved",
+      doneWhen: ["Successful execution"]
+    }));
+  });
+
+  it("continues after repeated failures and can still complete without quality evaluation", async () => {
+    const harness = createHarness({
+      tasks: [createTask({ id: "task-10e", status: "queued" })],
+      executions: [
+        createExecutionResult({
+          exitCode: 1,
+          errorCategory: "command_failed",
+          summary: "same failure",
+          sessionId: "codex:s1"
+        }),
+        createExecutionResult({
+          exitCode: 1,
+          errorCategory: "command_failed",
+          summary: "same failure",
+          sessionId: "codex:s1"
+        }),
+        createExecutionResult({
+          exitCode: 0,
+          errorCategory: "none",
+          summary: "recovered without quality",
+          sessionId: "codex:s1"
+        })
+      ],
+      qualityEnabled: false
+    });
+
+    await harness.services.runSchedulerTick();
+
+    expect(harness.tasks.get("task-10e")?.status).toBe("done");
+    expect(harness.transitions.map((item) => `${item.from}->${item.to}`)).toEqual([
+      "queued->running",
+      "running->repairing",
+      "repairing->done"
+    ]);
+    expect(harness.logs.some((item) => item.eventType === "goal.stop_reason_continued")).toBe(true);
   });
 
   it("pulls tasks from integrations and queues valid new tasks", async () => {
@@ -1027,6 +1141,7 @@ function createHarness(input: {
   tasks: TitingTask[];
   executions: Array<ExecutionResult | Error | Promise<ExecutionResult>>;
   qualityResults?: Array<Awaited<ReturnType<QualityPlugin["evaluate"]>>>;
+  qualityEnabled?: boolean;
   agent?: AgentRecord;
   agents?: AgentRecord[];
   agentOfflineTimeoutMs?: number;
@@ -1046,15 +1161,7 @@ function createHarness(input: {
   const executions = new Map<string, ExecutionRecord>();
   const evalResults: EvalResult[] = [];
   const repairGoals = new Map<string, RepairGoal>();
-  const pluginConfigs = new Map<string, {
-    id: string;
-    pluginId: string;
-    kind: "task-integration" | "execution" | "environment" | "quality" | "observability-governance";
-    enabled: boolean;
-    priority: number;
-    config: Record<string, unknown>;
-    updatedAt: Date;
-  }>();
+  const pluginConfigs = new Map<string, import("@titing/plugin-api").PluginConfig>();
   const events: Array<{
     id: string;
     schemaVersion: string;
@@ -1131,7 +1238,7 @@ function createHarness(input: {
       createTaskIntegrationPlugin(input.pulledTasks ?? [], input.humanReplies ?? [], reportedResults, reportedNeedsHuman),
       createEnvironmentPlugin(input.environmentError),
       executionPlugin,
-      qualityPlugin,
+      ...(input.qualityEnabled === false ? [] : [qualityPlugin]),
       ...(input.governancePlugin ? [input.governancePlugin] : [])
     ] as RuntimePlugin[]),
     now: () => now,

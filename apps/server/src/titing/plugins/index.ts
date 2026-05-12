@@ -6,12 +6,14 @@ import { ServerConfig } from "../config";
 import { CodexExecutionPlugin, CursorExecutionPlugin } from "./execution";
 import { LocalWorktreeEnvironmentPlugin } from "./environment";
 import { DefaultObservabilityGovernancePlugin } from "./governance";
+import { RootLogsPlugin } from "./log";
 import { MeegleTaskIntegrationPlugin } from "./meegle";
 import { DefaultQualityPlugin } from "./quality";
 
 export { CodexExecutionPlugin, CursorExecutionPlugin } from "./execution";
 export { EnvironmentPreparationError, LocalWorktreeEnvironmentPlugin } from "./environment";
 export { DefaultObservabilityGovernancePlugin } from "./governance";
+export { RootLogsPlugin } from "./log";
 export { MeegleTaskIntegrationPlugin } from "./meegle";
 export { DefaultQualityPlugin } from "./quality";
 
@@ -22,6 +24,7 @@ export { DefaultQualityPlugin } from "./quality";
 export function createBuiltinPlugins(config: ServerConfig) {
   const governance = new DefaultObservabilityGovernancePlugin(config.governance);
   return [
+    new RootLogsPlugin(),
     new MeegleTaskIntegrationPlugin(config),
     new LocalWorktreeEnvironmentPlugin(config),
     new CodexExecutionPlugin(config.plugins.execution.codexBin, config.goalRecovery.executionTimeoutMs, governance),
