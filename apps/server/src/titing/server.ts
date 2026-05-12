@@ -4,13 +4,16 @@ import { randomUUID } from "node:crypto";
 import {
   AgentRecord,
   CreateTaskInput,
+  ObservabilityEvent,
   PluginConfigRepository,
+  RuntimePlugin,
   TitingTask
 } from "@titing/plugin-api";
 import { NotFoundError, PluginRuntime, TitingServices } from "@titing/core";
 import { readConfig, ServerConfig } from "./config";
 import { createDatabase, DatabaseClient } from "./database";
 import { InMemoryEventStream } from "./event-stream";
+import { isHttpRoutePlugin } from "./http-plugin";
 import { runMigrations } from "./migration-runner";
 import { verifyDatabaseConnection } from "./startup-errors";
 import {
@@ -24,7 +27,6 @@ import {
   PgTaskTransitionRepository
 } from "./repositories";
 import { createBuiltinPlugins } from "./plugins";
-import { MeegleTaskIntegrationPlugin } from "./plugins";
 
 type RouteServices = Pick<
   TitingServices,
@@ -68,6 +70,7 @@ type BootstrapState = {
   events: InMemoryEventStream;
   pool: ServerPool;
   config: ServerConfig;
+  plugins: RuntimePlugin[];
 };
 
 export async function buildServer(config: ServerConfig = readConfig()) {
@@ -112,7 +115,7 @@ export async function buildServer(config: ServerConfig = readConfig()) {
 
   await seedAgents(services, config.scheduler.agentCount);
   return buildServerWithState(
-    { services, events, pool: database.pool, config },
+    { services, events, pool: database.pool, config, plugins: runtime.list() },
     { schedulerIntervalMs: config.scheduler.intervalMs, logger: true, startScheduler: true }
   );
 }
@@ -297,36 +300,6 @@ function wireRoutes(fastify: FastifyInstance, state: BootstrapState): void {
     return state.services.recoverAgent(params.id);
   });
   fastify.get("/api/plugins", async () => state.services.listPlugins());
-  fastify.get("/api/integrations/meegle/health", async () => {
-    const helper = new MeegleTaskIntegrationPlugin(state.config);
-    return {
-      ok: helper.webhookHealth().healthy,
-      pluginId: helper.id,
-      ...helper.webhookHealth()
-    };
-  });
-  fastify.post("/api/integrations/meegle/webhook", async (request: FastifyRequest, reply: FastifyReply) => {
-    const helper = new MeegleTaskIntegrationPlugin(state.config);
-    if (state.config.plugins.meegle.mode !== "webhook") {
-      return reply.status(409).send({ error: "Meegle webhook mode is not enabled" });
-    }
-    const secret = request.headers["x-titing-webhook-secret"];
-    const providedSecret = Array.isArray(secret) ? secret[0] : secret;
-    if (!helper.verifyWebhookSecret(providedSecret)) {
-      return reply.status(401).send({ error: "Invalid Meegle webhook secret" });
-    }
-    const tasks = helper.parseWebhookTasks(request.body);
-    if (tasks.length === 0) {
-      return reply.status(400).send({ error: "Webhook payload must include task or tasks" });
-    }
-    const ingested = (
-      await Promise.all(tasks.map((task) => state.services.ingestTaskFromIntegration(task, "meegle-webhook")))
-    ).filter((task): task is NonNullable<typeof task> => Boolean(task));
-    return reply.status(202).send({
-      accepted: ingested.length,
-      externalIds: ingested.map((task) => task.externalId).filter((value): value is string => Boolean(value))
-    });
-  });
   fastify.get("/api/plugin-configs", async () => state.services.listPluginConfigs());
   fastify.post("/api/plugin-configs", async (request: FastifyRequest) => {
     const body = request.body as {
@@ -345,6 +318,10 @@ function wireRoutes(fastify: FastifyInstance, state: BootstrapState): void {
     });
   });
   fastify.get("/api/dashboard", async () => state.services.dashboard());
+  fastify.get("/api/ops/events", async () => {
+    const [tasks, events] = await Promise.all([state.services.listTasks(), Promise.resolve(state.events.snapshot())]);
+    return buildOpsEventSnapshot(tasks, events);
+  });
   fastify.post("/api/debug/sync", async () => state.services.runTaskSyncNow());
   fastify.post("/api/debug/scheduler", async () => state.services.runSchedulerDispatchNow());
 
@@ -369,10 +346,93 @@ function wireRoutes(fastify: FastifyInstance, state: BootstrapState): void {
 
     return reply.hijack();
   });
+
+  for (const plugin of state.plugins) {
+    if (!isHttpRoutePlugin(plugin)) {
+      continue;
+    }
+    plugin.registerRoutes?.(fastify, {
+      services: state.services,
+      config: state.config
+    });
+  }
 }
 
 function formatSseEvent(type: string, data: unknown): string {
   return `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+const OPS_WATCH_EVENT_TYPES = [
+  "execution.blocked",
+  "execution.retry_scheduled",
+  "scheduler.tick_skipped",
+  "agent.offline",
+  "plugin.integration_skipped"
+] as const;
+
+function buildOpsEventSnapshot(tasks: TitingTask[], events: ObservabilityEvent[]) {
+  const watchSet = new Set<string>(OPS_WATCH_EVENT_TYPES);
+  const sortedEvents = [...events].sort((left, right) => {
+    return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+  });
+  const watchedEvents = sortedEvents.filter((event) => watchSet.has(event.eventType));
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const countsByEventType = watchedEvents.reduce<Record<string, number>>((result, event) => {
+    result[event.eventType] = (result[event.eventType] ?? 0) + 1;
+    return result;
+  }, {});
+
+  const recentAbnormalTasks = new Map<
+    string,
+    {
+      taskId: string;
+      title: string;
+      status: string;
+      traceId: string;
+      eventType: string;
+      message: string;
+      createdAt: Date;
+      retryCount: number;
+      repairCount: number;
+    }
+  >();
+  for (const event of watchedEvents) {
+    if (!event.taskId || recentAbnormalTasks.has(event.taskId)) {
+      continue;
+    }
+    const task = taskById.get(event.taskId);
+    if (!task) {
+      continue;
+    }
+    recentAbnormalTasks.set(event.taskId, {
+      taskId: task.id,
+      title: task.title,
+      status: task.status,
+      traceId: task.traceId,
+      eventType: event.eventType,
+      message: event.message,
+      createdAt: event.createdAt,
+      retryCount: task.retryCount,
+      repairCount: task.repairCount
+    });
+  }
+
+  return {
+    focusEventTypes: [...OPS_WATCH_EVENT_TYPES],
+    watchedEventCount: watchedEvents.length,
+    eventTypeCounts: countsByEventType,
+    eventTypeRanking: Object.entries(countsByEventType)
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+      .map(([eventType, count]) => ({ eventType, count })),
+    recentWatchedEvents: watchedEvents.slice(0, 12).map((event) => ({
+      ...event,
+      createdAt: event.createdAt.toISOString()
+    })),
+    recentAbnormalTasks: [...recentAbnormalTasks.values()].slice(0, 8).map((item) => ({
+      ...item,
+      createdAt: item.createdAt.toISOString()
+    }))
+  };
 }
 
 async function buildReadiness(state: BootstrapState) {

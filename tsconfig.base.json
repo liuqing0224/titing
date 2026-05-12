@@ -13,6 +13,6 @@
       "@titing/core": ["packages/core/src/index.ts"],
       "@titing/plugin-api": ["packages/plugin-api/src/index.ts"]
     },
-    "ignoreDeprecations": "5.0"
+    "ignoreDeprecations": "6.0"
   }
 }

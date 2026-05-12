@@ -29,6 +29,8 @@ export type ServerConfig = {
       mode: "polling" | "webhook";
       sourceMode?: "latest_sprint" | null;
       cliBin?: string;
+      authHost?: string | null;
+      authProfile?: string | null;
       projectKey?: string | null;
       projectScopeName?: string | null;
       sprintTypeName?: string | null;
@@ -82,6 +84,8 @@ export const CONFIG_DEFAULTS = {
       mode: "polling" as const,
       sourceMode: null as "latest_sprint" | null,
       cliBin: "meegle",
+      authHost: null,
+      authProfile: null,
       projectKey: null,
       projectScopeName: null,
       sprintTypeName: null,
@@ -209,6 +213,16 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
           env,
           ["MEEGLE_CLI_BIN", "TITING_PLUGIN_MEEGLE_CLI_BIN"],
           CONFIG_DEFAULTS.plugins.meegle.cliBin ?? "meegle"
+        ),
+        authHost: readOptionalString(
+          env,
+          ["MEEGLE_AUTH_HOST", "TITING_PLUGIN_MEEGLE_AUTH_HOST"],
+          CONFIG_DEFAULTS.plugins.meegle.authHost
+        ),
+        authProfile: readOptionalString(
+          env,
+          ["MEEGLE_AUTH_PROFILE", "TITING_PLUGIN_MEEGLE_AUTH_PROFILE"],
+          CONFIG_DEFAULTS.plugins.meegle.authProfile
         ),
         projectKey: readOptionalString(
           env,

@@ -393,6 +393,158 @@ describe("MeegleTaskIntegrationPlugin", () => {
     }
   });
 
+  it("uses the legacy Meegle task CLI flow when available", async () => {
+    const sandbox = await mkdtemp(join(tmpdir(), "titing-meegle-cli-"));
+    const previousLegacy = process.env.MEEGLE_TEST_LEGACY;
+    const previousLog = process.env.MEEGLE_TEST_LOG;
+    try {
+      const bin = join(sandbox, "fake-meegle");
+      const logPath = join(sandbox, "cli-log.jsonl");
+      await writeFakeMeegleCli(bin);
+      process.env.MEEGLE_TEST_LEGACY = "1";
+      process.env.MEEGLE_TEST_LOG = logPath;
+
+      const plugin = new MeegleTaskIntegrationPlugin({
+        ...createConfig(sandbox),
+        plugins: {
+          ...createConfig(sandbox).plugins,
+          meegle: {
+            ...createConfig(sandbox).plugins.meegle,
+            mode: "polling",
+            cliBin: bin,
+            tasksFile: null,
+            resultsFile: null,
+            webhookSecret: null,
+            projectKey: "PROJ",
+            queryMql: "SELECT * FROM backlog"
+          }
+        }
+      });
+
+      const pulled = await plugin.pullTasks();
+      expect(pulled).toEqual([
+        expect.objectContaining({
+          source: "meegle",
+          externalId: "MEEGLE-LEGACY-1",
+          repo: "https://example.com/legacy.git",
+          branch: "main",
+          instruction: "Legacy fix",
+          priority: "high"
+        })
+      ]);
+    } finally {
+      process.env.MEEGLE_TEST_LEGACY = previousLegacy;
+      process.env.MEEGLE_TEST_LOG = previousLog;
+      await rm(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to workitem CLI queries and reports results back to Meegle comments", async () => {
+    const sandbox = await mkdtemp(join(tmpdir(), "titing-meegle-cli-"));
+    const previousLegacy = process.env.MEEGLE_TEST_LEGACY;
+    const previousLog = process.env.MEEGLE_TEST_LOG;
+    try {
+      const bin = join(sandbox, "fake-meegle");
+      const logPath = join(sandbox, "cli-log.jsonl");
+      await writeFakeMeegleCli(bin);
+      delete process.env.MEEGLE_TEST_LEGACY;
+      process.env.MEEGLE_TEST_LOG = logPath;
+
+      const plugin = new MeegleTaskIntegrationPlugin({
+        ...createConfig(sandbox),
+        plugins: {
+          ...createConfig(sandbox).plugins,
+          meegle: {
+            ...createConfig(sandbox).plugins.meegle,
+            mode: "polling",
+            cliBin: bin,
+            tasksFile: null,
+            resultsFile: null,
+            webhookSecret: null,
+            projectKey: "PROJ",
+            queryMql: "SELECT * FROM backlog",
+            detailFields: ["repo", "branch", "instruction", "priority"]
+          }
+        }
+      });
+
+      const pulled = await plugin.pullTasks();
+      expect(pulled).toEqual([
+        expect.objectContaining({
+          externalId: "MEEGLE-MQL-1",
+          title: "Query task",
+          repo: "https://example.com/query.git",
+          branch: "feature/query",
+          instruction: "Implement query flow",
+          priority: "high"
+        })
+      ]);
+
+      await plugin.reportResult({ ...pulled[0], status: "done" }, "Completed successfully");
+      const logLines = (await readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
+      expect(logLines).toContainEqual(expect.arrayContaining(["comment", "add", "--work-item-id", "MEEGLE-MQL-1"]));
+    } finally {
+      process.env.MEEGLE_TEST_LEGACY = previousLegacy;
+      process.env.MEEGLE_TEST_LOG = previousLog;
+      await rm(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("uses latest sprint CLI detail fallback from description blocks", async () => {
+    const sandbox = await mkdtemp(join(tmpdir(), "titing-meegle-cli-"));
+    const previousLegacy = process.env.MEEGLE_TEST_LEGACY;
+    const previousLog = process.env.MEEGLE_TEST_LOG;
+    try {
+      const bin = join(sandbox, "fake-meegle");
+      const logPath = join(sandbox, "cli-log.jsonl");
+      await writeFakeMeegleCli(bin);
+      delete process.env.MEEGLE_TEST_LEGACY;
+      process.env.MEEGLE_TEST_LOG = logPath;
+
+      const plugin = new MeegleTaskIntegrationPlugin({
+        ...createConfig(sandbox),
+        plugins: {
+          ...createConfig(sandbox).plugins,
+          meegle: {
+            ...createConfig(sandbox).plugins.meegle,
+            mode: "polling",
+            sourceMode: "latest_sprint",
+            cliBin: bin,
+            tasksFile: null,
+            resultsFile: null,
+            webhookSecret: null,
+            projectKey: "PROJ",
+            projectScopeName: "scope",
+            sprintTypeName: "Sprint",
+            demandTypeName: "Demand",
+            sprintLinkField: "规划迭代",
+            nodeName: "开发",
+            latestSprintDetailFields: ["description"]
+          }
+        }
+      });
+
+      const pulled = await plugin.pullTasks();
+      expect(pulled).toEqual([
+        expect.objectContaining({
+          externalId: "MEEGLE-LS-1",
+          repo: "https://example.com/latest.git",
+          branch: "release/1.2",
+          instruction: "Finish latest sprint work",
+          metadata: expect.objectContaining({
+            latestSprint: expect.objectContaining({
+              id: "321"
+            })
+          })
+        })
+      ]);
+    } finally {
+      process.env.MEEGLE_TEST_LEGACY = previousLegacy;
+      process.env.MEEGLE_TEST_LOG = previousLog;
+      await rm(sandbox, { recursive: true, force: true });
+    }
+  });
+
   it("supports webhook mode health, secret verification, and webhook payload parsing", async () => {
     const plugin = new MeegleTaskIntegrationPlugin({
       ...createConfig("/tmp"),
@@ -436,6 +588,81 @@ describe("MeegleTaskIntegrationPlugin", () => {
         title: "Webhook issue"
       })
     ]);
+  });
+
+  it("starts and polls Meegle browser authorization via the CLI device-code flow", async () => {
+    const sandbox = await mkdtemp(join(tmpdir(), "titing-meegle-auth-"));
+    const previousAuthState = process.env.MEEGLE_TEST_AUTH_STATE;
+    const previousLog = process.env.MEEGLE_TEST_LOG;
+    try {
+      const bin = join(sandbox, "fake-meegle");
+      const logPath = join(sandbox, "cli-log.jsonl");
+      await writeFakeMeegleCli(bin);
+      process.env.MEEGLE_TEST_AUTH_STATE = "unauthenticated";
+      process.env.MEEGLE_TEST_LOG = logPath;
+
+      const plugin = new MeegleTaskIntegrationPlugin({
+        ...createConfig(sandbox),
+        plugins: {
+          ...createConfig(sandbox).plugins,
+          meegle: {
+            ...createConfig(sandbox).plugins.meegle,
+            mode: "polling",
+            cliBin: bin,
+            tasksFile: null,
+            resultsFile: null,
+            webhookSecret: null
+          }
+        }
+      });
+
+      await expect(plugin.getAuthStatus()).resolves.toEqual(expect.objectContaining({
+        status: "unauthenticated",
+        authenticated: false,
+        message: "Meegle authorization required"
+      }));
+
+      const started = await plugin.startAuth();
+      expect(started).toEqual(expect.objectContaining({
+        status: "pending",
+        authorizationUrl: "https://project.feishu.cn/auth/device",
+        deviceCode: "device-123",
+        clientId: "client-123",
+        intervalSeconds: 2,
+        expiresInSeconds: 600
+      }));
+
+      await expect(plugin.pollAuth({
+        deviceCode: started.deviceCode,
+        clientId: started.clientId,
+        intervalSeconds: started.intervalSeconds,
+        expiresInSeconds: started.expiresInSeconds
+      })).resolves.toEqual(expect.objectContaining({
+        status: "pending",
+        authenticated: false
+      }));
+
+      process.env.MEEGLE_TEST_AUTH_STATE = "authenticated";
+      await expect(plugin.pollAuth({
+        deviceCode: started.deviceCode,
+        clientId: started.clientId,
+        intervalSeconds: started.intervalSeconds,
+        expiresInSeconds: started.expiresInSeconds
+      })).resolves.toEqual(expect.objectContaining({
+        status: "authenticated",
+        authenticated: true
+      }));
+
+      await plugin.logoutAuth();
+      const logLines = (await readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
+      expect(logLines).toContainEqual(expect.arrayContaining(["auth", "login", "--device-code", "--phase", "init"]));
+      expect(logLines).toContainEqual(expect.arrayContaining(["auth", "login", "--device-code", "--phase", "poll", "--once"]));
+      expect(logLines).toContainEqual(["auth", "logout", "--format", "json"]);
+    } finally {
+      process.env.MEEGLE_TEST_AUTH_STATE = previousAuthState;
+      process.env.MEEGLE_TEST_LOG = previousLog;
+      await rm(sandbox, { recursive: true, force: true });
+    }
   });
 });
 
@@ -527,6 +754,144 @@ async function createGitRepo(path: string, files: Record<string, string>): Promi
   await git(["add", "."], path);
   await git(["commit", "-m", "init"], path);
   await git(["branch", "-M", "main"], path);
+}
+
+async function writeFakeMeegleCli(path: string): Promise<void> {
+  await writeFile(
+    path,
+    `#!/usr/bin/env node
+const fs = require("fs");
+const args = process.argv.slice(2);
+const logPath = process.env.MEEGLE_TEST_LOG;
+if (logPath) {
+  fs.appendFileSync(logPath, JSON.stringify(args) + "\\n");
+}
+const print = (value) => process.stdout.write(JSON.stringify(value));
+if (args[0] === "project" && args[1] === "search") {
+  print({ items: [{ key: "PROJ" }] });
+  process.exit(0);
+}
+if (args[0] === "auth" && args[1] === "status") {
+  if (process.env.MEEGLE_TEST_AUTH_STATE === "unauthenticated") {
+    process.stderr.write("Meegle authorization required");
+    process.exit(1);
+  }
+  print({ authenticated: true, host: "project.feishu.cn" });
+  process.exit(0);
+}
+if (args[0] === "auth" && args[1] === "login" && args.includes("--device-code") && args.includes("--phase") && args.includes("init")) {
+  print({
+    authorization_url: "https://project.feishu.cn/auth/device",
+    device_code: "device-123",
+    client_id: "client-123",
+    interval: 2,
+    expires_in: 600,
+    user_code: "ABCD-EFGH"
+  });
+  process.exit(0);
+}
+if (args[0] === "auth" && args[1] === "login" && args.includes("--device-code") && args.includes("--phase") && args.includes("poll")) {
+  if (process.env.MEEGLE_TEST_AUTH_STATE === "authenticated") {
+    print({ authenticated: true, host: "project.feishu.cn" });
+    process.exit(0);
+  }
+  print({ status: "pending", authenticated: false });
+  process.exit(0);
+}
+if (args[0] === "auth" && args[1] === "logout") {
+  print({ ok: true });
+  process.exit(0);
+}
+if (args[0] === "task" && args[1] === "list") {
+  if (process.env.MEEGLE_TEST_LEGACY === "1") {
+    print([{ id: "MEEGLE-LEGACY-1", title: "Legacy task" }]);
+    process.exit(0);
+  }
+  process.stderr.write("unknown command");
+  process.exit(1);
+}
+if (args[0] === "task" && args[1] === "get") {
+  print({
+    id: args[2],
+    repo: "https://example.com/legacy.git",
+    branch: "main",
+    instruction: "Legacy fix",
+    priority: "high"
+  });
+  process.exit(0);
+}
+if (args[0] === "workitem" && args[1] === "query") {
+  const mql = args[args.indexOf("--mql") + 1] || "";
+  if (mql.includes("FROM \`scope\`.\`Sprint\`")) {
+    print({
+      data: {
+        data: {
+          "1": [
+            {
+              moql_field_list: [
+                { key: "work_item_id", name: "工作项id", value: { long_value: 321 } },
+                { key: "name", name: "名称", value: { string_value: "Sprint 321" } }
+              ]
+            }
+          ]
+        },
+        list: [{ count: 1 }]
+      }
+    });
+    process.exit(0);
+  }
+  if (mql.includes("any_relation_match")) {
+    print([{ "工作项id": "MEEGLE-LS-1", "名称": "Latest sprint task" }]);
+    process.exit(0);
+  }
+  print([{ work_item_id: "MEEGLE-MQL-1", name: "Query task" }]);
+  process.exit(0);
+}
+if (args[0] === "workitem" && args[1] === "get") {
+  const taskId = args[args.indexOf("--work-item-id") + 1];
+  if (taskId === "MEEGLE-MQL-1") {
+    print({
+      data: {
+        work_item_attribute: {
+          work_item_id: taskId,
+          work_item_name: "Query task",
+          work_item_status: { name: "P1" },
+          owned_project: { key: "PROJ" }
+        },
+        work_item_fields: [
+          { key: "repo", value: "https://example.com/query.git" },
+          { key: "branch", value: "feature/query" },
+          { key: "instruction", value: "Implement query flow" }
+        ]
+      }
+    });
+    process.exit(0);
+  }
+  if (taskId === "MEEGLE-LS-1") {
+    print({
+      data: {
+        work_item_attribute: {
+          work_item_id: taskId,
+          work_item_name: "Latest sprint task",
+          work_item_status: { name: "P2" },
+          owned_project: { key: "PROJ" }
+        },
+        work_item_fields: [
+          { key: "description", value: "Repo: https://example.com/latest.git\\nBranch: release/1.2\\n---\\nFinish latest sprint work" }
+        ]
+      }
+    });
+    process.exit(0);
+  }
+}
+if (args[0] === "comment" && args[1] === "add") {
+  print({ ok: true });
+  process.exit(0);
+}
+process.exit(1);
+`
+  );
+  await execFileAsync("chmod", ["+x", path]);
 }
 
 async function git(args: string[], cwd: string): Promise<void> {

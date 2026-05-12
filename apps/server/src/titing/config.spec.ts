@@ -31,42 +31,46 @@ describe("readConfig", () => {
 
     expect(config).toEqual(expect.objectContaining({
       port: 4100,
-      scheduler: {
+      scheduler: expect.objectContaining({
         intervalMs: 45_000,
         agentCount: 4,
         agentOfflineTimeoutMs: 610_000
-      },
+      }),
       workspace: expect.objectContaining({
+        root: expect.stringContaining("tmp/workspaces"),
+        repoCacheRoot: expect.stringContaining("tmp/repos"),
         cleanupOnSuccess: false,
         cleanupOnFailure: true
       }),
-      goalRecovery: {
+      goalRecovery: expect.objectContaining({
         executionTimeoutMs: 120_000,
         qualityTimeoutMs: 240_000,
         environmentRetryLimit: 5,
         executionRetryLimit: 4,
         maxRepairIterations: 7
-      },
+      }),
       plugins: expect.objectContaining({
         execution: {
           codexBin: "codex-dev",
           cursorBin: "cursor-dev"
         },
-        meegle: {
+        meegle: expect.objectContaining({
           mode: "polling",
           tasksFile: "./tasks.json",
           resultsFile: "./results.json",
-          webhookSecret: null
-        }
+          webhookSecret: null,
+          sourceMode: null,
+          cliBin: "meegle"
+        })
       }),
-      governance: {
+      governance: expect.objectContaining({
         allowCommandPrefixes: ["codex", "agent"],
         blockCommandPatterns: ["git\\s+push", "rm\\s+-rf"],
         maxPromptChars: 8000,
         maxOutputChars: 9000,
         maxFilesChanged: 11,
         maxDiffLines: 222
-      }
+      })
     }));
   });
 

@@ -1,0 +1,117 @@
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { EnvironmentPlugin, PluginHealth, PreparedWorkspace, TitingTask } from "@titing/plugin-api";
+import { ServerConfig } from "../config";
+import {
+  EnvironmentPreparationError,
+  hashRepo,
+  installDependenciesIfNeeded,
+  normalizeWorkspaceEnv,
+  pathExists,
+  resolveBranchRef,
+  runCheckedCommand
+} from "./shared";
+
+/**
+ * Prepares an isolated git worktree per task from a shared mirror cache under `repoCacheRoot`, then optional `npm install`.
+ * Cleanup removes the worktree via git and may delete the whole task workspace dir based on `cleanupOnSuccess` / `cleanupOnFailure`.
+ */
+export class LocalWorktreeEnvironmentPlugin implements EnvironmentPlugin {
+  readonly id = "git-worktree-local";
+  readonly kind = "environment" as const;
+  readonly priority = 100;
+  readonly capabilities = ["local-worktree"];
+
+  constructor(private readonly config: ServerConfig) {}
+
+  /** Reflects configured workspace root; does not probe git. */
+  async health(): Promise<PluginHealth> {
+    return { healthy: true, message: `Workspace root ${this.config.workspace.root}` };
+  }
+
+  /**
+   * Workspace pipeline: mkdir layout → clone-or-fetch mirror → remove stale worktree → resolve branch ref →
+   * `worktree add` + checkout → install deps if `package.json` exists → write `artifacts/workspace.json`.
+   */
+  async prepareWorkspace(task: TitingTask): Promise<PreparedWorkspace> {
+    const workspacePath = resolve(this.config.workspace.root, `${task.id}-${task.executor}`);
+    const repoPath = join(workspacePath, "repo");
+    const artifactsPath = join(workspacePath, "artifacts");
+    const cachePath = resolve(this.config.workspace.repoCacheRoot, hashRepo(task.repo));
+    const env = normalizeWorkspaceEnv(task.metadata.env);
+
+    await mkdir(workspacePath, { recursive: true });
+    await mkdir(this.config.workspace.repoCacheRoot, { recursive: true });
+    await mkdir(artifactsPath, { recursive: true });
+
+    if (!(await pathExists(cachePath))) {
+      await runCheckedCommand("git", ["clone", "--mirror", task.repo, cachePath], this.config.workspace.root, process.env, this.config.goalRecovery.executionTimeoutMs, "clone");
+    } else {
+      await runCheckedCommand("git", ["--git-dir", cachePath, "fetch", "--all", "--prune"], this.config.workspace.root, process.env, this.config.goalRecovery.executionTimeoutMs, "fetch");
+    }
+
+    await rm(repoPath, { recursive: true, force: true });
+    const targetRef = await resolveBranchRef(cachePath, task.branch, this.config.goalRecovery.executionTimeoutMs);
+    await runCheckedCommand(
+      "git",
+      ["--git-dir", cachePath, "worktree", "add", "--force", repoPath, targetRef],
+      this.config.workspace.root,
+      process.env,
+      this.config.goalRecovery.executionTimeoutMs,
+      "worktree"
+    );
+    await runCheckedCommand(
+      "git",
+      ["-C", repoPath, "checkout", "-B", task.branch, targetRef],
+      this.config.workspace.root,
+      process.env,
+      this.config.goalRecovery.executionTimeoutMs,
+      "checkout"
+    );
+
+    await installDependenciesIfNeeded(repoPath, env, this.config.goalRecovery.executionTimeoutMs);
+    await writeFile(join(artifactsPath, "workspace.json"), JSON.stringify({
+      taskId: task.id,
+      repo: task.repo,
+      branch: task.branch,
+      preparedAt: new Date().toISOString(),
+      envKeys: Object.keys(env)
+    }, null, 2));
+
+    return {
+      workspacePath,
+      repoPath,
+      branch: task.branch,
+      cachePath,
+      artifactsPath,
+      env
+    };
+  }
+
+  /**
+   * Best-effort `git worktree remove` using the mirror at `workspace.cachePath`, then optionally rimraf the task folder.
+   */
+  async cleanupWorkspace(task: TitingTask, workspace: PreparedWorkspace): Promise<void> {
+    try {
+      if (await pathExists(workspace.repoPath)) {
+        await runCheckedCommand(
+          "git",
+          ["--git-dir", workspace.cachePath, "worktree", "remove", "--force", workspace.repoPath],
+          this.config.workspace.root,
+          process.env,
+          this.config.goalRecovery.executionTimeoutMs,
+          "cleanup"
+        );
+      }
+    } finally {
+      const shouldDelete =
+        (task.status === "done" && this.config.workspace.cleanupOnSuccess) ||
+        (task.status !== "done" && this.config.workspace.cleanupOnFailure);
+      if (shouldDelete) {
+        await rm(workspace.workspacePath, { recursive: true, force: true });
+      }
+    }
+  }
+}
+
+export { EnvironmentPreparationError } from "./shared";

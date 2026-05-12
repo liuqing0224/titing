@@ -21,7 +21,7 @@ function loadEnvFile(filePath: string): void {
     }
 
     const key = trimmed.slice(0, equalsIndex).trim();
-    if (!key || process.env[key] !== undefined) {
+    if (!key) {
       continue;
     }
 

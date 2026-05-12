@@ -205,6 +205,8 @@ th {
 
 .stats-grid,
 .console-grid,
+.ops-grid,
+.ops-summary-grid,
 .detail-grid,
 .mini-grid,
 .timeline-section,
@@ -216,6 +218,20 @@ th {
 .stats-grid,
 .console-grid {
   margin-top: 18px;
+}
+
+.ops-panel {
+  margin-top: 18px;
+  display: grid;
+  gap: 18px;
+}
+
+.ops-summary-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ops-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .stats-grid {
@@ -444,6 +460,30 @@ th {
   gap: 12px;
 }
 
+.ops-card {
+  display: grid;
+  gap: 12px;
+}
+
+.ops-task-row {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  padding: 12px 0 0;
+  color: inherit;
+  cursor: pointer;
+}
+
+.ops-task-row:hover {
+  color: var(--accent);
+}
+
 .plugin-metrics {
   margin-top: 6px;
 }
@@ -590,6 +630,8 @@ th {
 @media (max-width: 960px) {
   .hero,
   .stats-grid,
+  .ops-grid,
+  .ops-summary-grid,
   .detail-grid,
   .mini-grid,
   .dual,

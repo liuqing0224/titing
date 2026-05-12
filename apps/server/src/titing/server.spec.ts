@@ -1,6 +1,12 @@
 import { InMemoryEventStream } from "./event-stream";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { buildServerWithState } from "./server";
 import { CONFIG_DEFAULTS, ServerConfig } from "./config";
+import { createBuiltinPlugins } from "./plugins";
 import { NotFoundError, TitingServices } from "@titing/core";
 import {
   AgentRecord,
@@ -8,11 +14,14 @@ import {
   EvalResult,
   ExecutionLogRecord,
   ExecutionRecord,
+  ObservabilityEvent,
   PluginConfig,
   RepairGoal,
   TaskTransition,
   TitingTask
 } from "@titing/plugin-api";
+
+const execFileAsync = promisify(execFile);
 
 describe("titing server handlers", () => {
   it("returns structured health and readiness payloads", async () => {
@@ -92,6 +101,66 @@ describe("titing server handlers", () => {
       expect(dispatch.json()).toEqual({ queuedBefore: 3 });
       expect(state.calls.runTaskSyncNow).toBe(1);
       expect(state.calls.runSchedulerDispatchNow).toBe(1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("aggregates global ops events into ranked counts and abnormal tasks", async () => {
+    const state = createState({
+      listTasks: async () => [
+        createTask(),
+        {
+          ...createTask(),
+          id: "task-2",
+          title: "Repair tests",
+          status: "blocked",
+          traceId: "trace-2",
+          retryCount: 2,
+          repairCount: 1
+        }
+      ]
+    });
+    await seedOpsEvents(state.events);
+    const server = await buildServerWithState(state, { startScheduler: false });
+    try {
+      const response = await server.inject({ method: "GET", url: "/api/ops/events" });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        focusEventTypes: expect.arrayContaining([
+          "execution.blocked",
+          "execution.retry_scheduled",
+          "scheduler.tick_skipped",
+          "agent.offline",
+          "plugin.integration_skipped"
+        ]),
+        watchedEventCount: 5,
+        eventTypeCounts: {
+          "execution.blocked": 1,
+          "execution.retry_scheduled": 2,
+          "scheduler.tick_skipped": 1,
+          "agent.offline": 1
+        },
+        eventTypeRanking: [
+          { eventType: "execution.retry_scheduled", count: 2 },
+          { eventType: "agent.offline", count: 1 },
+          { eventType: "execution.blocked", count: 1 },
+          { eventType: "scheduler.tick_skipped", count: 1 }
+        ],
+        recentAbnormalTasks: [
+          expect.objectContaining({
+            taskId: "task-1",
+            title: "Fix build",
+            eventType: "execution.retry_scheduled"
+          }),
+          expect.objectContaining({
+            taskId: "task-2",
+            title: "Repair tests",
+            eventType: "execution.blocked"
+          })
+        ]
+      });
     } finally {
       await server.close();
     }
@@ -182,15 +251,94 @@ describe("titing server handlers", () => {
       expect(denied.statusCode).toBe(401);
       expect(denied.json()).toEqual({ error: "Invalid Meegle webhook secret" });
       expect(health.statusCode).toBe(200);
-      expect(health.json()).toEqual(expect.objectContaining({
+      expect(health.json()).toEqual({
         ok: true,
         pluginId: "meegle",
-        mode: "webhook",
-        authMode: "shared-secret",
-        webhookSecretConfigured: true
-      }));
+        healthy: true,
+        message: "Meegle webhook integration ready"
+      });
     } finally {
       await server.close();
+    }
+  });
+
+  it("exposes Meegle browser authorization routes from the plugin registry", async () => {
+    const sandbox = await mkdtemp(join(tmpdir(), "titing-server-meegle-auth-"));
+    const previousAuthState = process.env.MEEGLE_TEST_AUTH_STATE;
+    try {
+      const bin = join(sandbox, "fake-meegle");
+      await writeServerFakeMeegleCli(bin);
+      process.env.MEEGLE_TEST_AUTH_STATE = "unauthenticated";
+
+      const state = createState();
+      state.config = {
+        ...state.config,
+        plugins: {
+          ...state.config.plugins,
+          meegle: {
+            ...state.config.plugins.meegle,
+            mode: "polling",
+            cliBin: bin,
+            tasksFile: null,
+            resultsFile: null,
+            webhookSecret: null
+          }
+        }
+      };
+      state.plugins = createBuiltinPlugins(state.config);
+      const server = await buildServerWithState(state, { startScheduler: false });
+      try {
+        const status = await server.inject({ method: "GET", url: "/api/integrations/meegle/auth/status" });
+        const start = await server.inject({ method: "POST", url: "/api/integrations/meegle/auth/start" });
+        const started = start.json();
+        const pending = await server.inject({
+          method: "POST",
+          url: "/api/integrations/meegle/auth/poll",
+          payload: {
+            deviceCode: started.deviceCode,
+            clientId: started.clientId,
+            intervalSeconds: started.intervalSeconds,
+            expiresInSeconds: started.expiresInSeconds
+          }
+        });
+        process.env.MEEGLE_TEST_AUTH_STATE = "authenticated";
+        const authenticated = await server.inject({
+          method: "POST",
+          url: "/api/integrations/meegle/auth/poll",
+          payload: {
+            deviceCode: started.deviceCode,
+            clientId: started.clientId,
+            intervalSeconds: started.intervalSeconds,
+            expiresInSeconds: started.expiresInSeconds
+          }
+        });
+
+        expect(status.statusCode).toBe(200);
+        expect(status.json()).toEqual(expect.objectContaining({
+          status: "unauthenticated",
+          authenticated: false
+        }));
+        expect(start.statusCode).toBe(200);
+        expect(started).toEqual(expect.objectContaining({
+          status: "pending",
+          authorizationUrl: "https://project.feishu.cn/auth/device"
+        }));
+        expect(pending.statusCode).toBe(200);
+        expect(pending.json()).toEqual(expect.objectContaining({
+          status: "pending",
+          authenticated: false
+        }));
+        expect(authenticated.statusCode).toBe(200);
+        expect(authenticated.json()).toEqual(expect.objectContaining({
+          status: "authenticated",
+          authenticated: true
+        }));
+      } finally {
+        await server.close();
+      }
+    } finally {
+      process.env.MEEGLE_TEST_AUTH_STATE = previousAuthState;
+      await rm(sandbox, { recursive: true, force: true });
     }
   });
 });
@@ -278,6 +426,7 @@ function createState(overrides: Partial<RouteServiceMocks> = {}) {
     calls,
     events: new InMemoryEventStream(),
     config: createConfig(),
+    plugins: createBuiltinPlugins(createConfig()),
     pool: {
       query: async () => ({ rows: [], rowCount: 0 }),
       end: async () => undefined
@@ -490,4 +639,100 @@ function createPlugins() {
       health: { healthy: true, message: "ok" }
     }
   ];
+}
+
+async function seedOpsEvents(stream: InMemoryEventStream): Promise<void> {
+  const base = new Date("2026-05-11T00:00:00.000Z");
+  const events: ObservabilityEvent[] = [
+    createOpsEvent({
+      id: "event-1",
+      taskId: "task-1",
+      traceId: "trace-shared",
+      eventType: "execution.retry_scheduled",
+      message: "Execution failure scheduled for retry",
+      createdAt: new Date(base.getTime() + 1_000)
+    }),
+    createOpsEvent({
+      id: "event-2",
+      taskId: "task-2",
+      traceId: "trace-2",
+      eventType: "execution.blocked",
+      message: "Execution failure blocked task",
+      createdAt: new Date(base.getTime() + 2_000)
+    }),
+    createOpsEvent({
+      id: "event-3",
+      traceId: "scheduler",
+      eventType: "scheduler.tick_skipped",
+      message: "Scheduler tick skipped",
+      createdAt: new Date(base.getTime() + 3_000)
+    }),
+    createOpsEvent({
+      id: "event-4",
+      taskId: "task-1",
+      traceId: "trace-shared",
+      eventType: "execution.retry_scheduled",
+      message: "Execution failure scheduled for retry",
+      createdAt: new Date(base.getTime() + 4_000)
+    }),
+    createOpsEvent({
+      id: "event-5",
+      traceId: "agent:agent-1",
+      eventType: "agent.offline",
+      message: "Agent marked offline after heartbeat timeout",
+      createdAt: new Date(base.getTime() + 5_000)
+    })
+  ];
+
+  for (const event of events) {
+    await stream.publish(event);
+  }
+}
+
+function createOpsEvent(
+  input: Partial<ObservabilityEvent> & Pick<ObservabilityEvent, "id" | "traceId" | "eventType" | "message" | "createdAt">
+): ObservabilityEvent {
+  return {
+    schemaVersion: TitingServices.OBSERVABILITY_SCHEMA_VERSION,
+    data: {},
+    ...input
+  };
+}
+
+async function writeServerFakeMeegleCli(path: string): Promise<void> {
+  await writeFile(
+    path,
+    `#!/usr/bin/env node
+const args = process.argv.slice(2);
+const print = (value) => process.stdout.write(JSON.stringify(value));
+if (args[0] === "auth" && args[1] === "status") {
+  if (process.env.MEEGLE_TEST_AUTH_STATE === "unauthenticated") {
+    process.stderr.write("Meegle authorization required");
+    process.exit(1);
+  }
+  print({ authenticated: true, host: "project.feishu.cn" });
+  process.exit(0);
+}
+if (args[0] === "auth" && args[1] === "login" && args.includes("--phase") && args.includes("init")) {
+  print({
+    authorization_url: "https://project.feishu.cn/auth/device",
+    device_code: "device-123",
+    client_id: "client-123",
+    interval: 2,
+    expires_in: 600
+  });
+  process.exit(0);
+}
+if (args[0] === "auth" && args[1] === "login" && args.includes("--phase") && args.includes("poll")) {
+  if (process.env.MEEGLE_TEST_AUTH_STATE === "authenticated") {
+    print({ authenticated: true, host: "project.feishu.cn" });
+    process.exit(0);
+  }
+  print({ status: "pending", authenticated: false });
+  process.exit(0);
+}
+process.exit(1);
+`
+  );
+  await execFileAsync("chmod", ["+x", path]);
 }

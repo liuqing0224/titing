@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 
@@ -17,11 +17,13 @@ class MockEventSource {
 
 describe("App", () => {
   const fetchMock = vi.fn<typeof fetch>();
+  const openMock = vi.fn<typeof window.open>();
 
   beforeEach(() => {
     MockEventSource.instances = [];
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    vi.stubGlobal("open", openMock);
     fetchMock.mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/dashboard")) {
@@ -29,6 +31,51 @@ describe("App", () => {
           tasks: { total: 2, byStatus: { queued: 1, failed: 1 } },
           agents: { total: 0, byStatus: {} },
           plugins: { total: 1, healthy: 0 }
+        });
+      }
+      if (url.endsWith("/ops/events")) {
+        return jsonResponse({
+          focusEventTypes: [
+            "execution.blocked",
+            "execution.retry_scheduled",
+            "scheduler.tick_skipped",
+            "agent.offline",
+            "plugin.integration_skipped"
+          ],
+          watchedEventCount: 4,
+          eventTypeCounts: {
+            "execution.retry_scheduled": 2,
+            "execution.blocked": 1,
+            "agent.offline": 1
+          },
+          eventTypeRanking: [
+            { eventType: "execution.retry_scheduled", count: 2 },
+            { eventType: "agent.offline", count: 1 },
+            { eventType: "execution.blocked", count: 1 }
+          ],
+          recentWatchedEvents: [
+            {
+              id: "ops-event-1",
+              eventType: "execution.blocked",
+              traceId: "trace-2",
+              taskId: "task-2",
+              createdAt: "2026-05-11T00:07:00.000Z",
+              data: {}
+            }
+          ],
+          recentAbnormalTasks: [
+            {
+              taskId: "task-2",
+              title: "Repair tests",
+              status: "failed",
+              traceId: "trace-2",
+              eventType: "execution.blocked",
+              message: "Execution failure blocked task",
+              createdAt: "2026-05-11T00:07:00.000Z",
+              retryCount: 2,
+              repairCount: 1
+            }
+          ]
         });
       }
       if (url.endsWith("/tasks")) {
@@ -106,6 +153,25 @@ describe("App", () => {
               }
             }
           }
+        });
+      }
+      if (url.endsWith("/integrations/meegle/auth/start")) {
+        return jsonResponse({
+          status: "pending",
+          authenticated: false,
+          authorizationUrl: "https://project.feishu.cn/auth/device",
+          deviceCode: "device-123",
+          clientId: "client-123",
+          intervalSeconds: 1,
+          expiresInSeconds: 600,
+          message: "Open the authorization URL to authorize Meegle"
+        });
+      }
+      if (url.endsWith("/integrations/meegle/auth/poll")) {
+        return jsonResponse({
+          status: "authenticated",
+          authenticated: true,
+          message: "Meegle authorization completed"
         });
       }
       if (url.endsWith("/tasks/task-1/executions") || url.endsWith("/tasks/task-2/executions")) {
@@ -228,6 +294,7 @@ describe("App", () => {
     cleanup();
     MockEventSource.instances = [];
     vi.unstubAllGlobals();
+    openMock.mockReset();
     fetchMock.mockReset();
   });
 
@@ -268,6 +335,39 @@ describe("App", () => {
     expect(screen.getByText(/enabled true · priority 30/i)).not.toBeNull();
     expect(screen.getByText(/One or more required plugin kinds are unhealthy/i)).not.toBeNull();
     expect(screen.getByText(/"mode": "poll"/i)).not.toBeNull();
+  });
+
+  it("opens the Meegle authorization URL and polls until authorized", async () => {
+    render(<App />);
+
+    await screen.findByText("credentials missing");
+    fireEvent.click(screen.getByRole("button", { name: /authorize meegle/i }));
+
+    await waitFor(() => {
+      expect(openMock).toHaveBeenCalledWith(
+        "https://project.feishu.cn/auth/device",
+        "_blank",
+        "noopener,noreferrer"
+      );
+    });
+    await screen.findByText(/Meegle authorization completed/i);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/integrations/meegle/auth/poll"),
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining("device-123")
+      })
+    );
+  });
+
+  it("shows the global ops panel with ranked event types and abnormal tasks", async () => {
+    render(<App />);
+
+    await screen.findByText("Global Event / Ops");
+    expect(screen.getAllByText("execution / retry_scheduled").length).toBeGreaterThan(0);
+    expect(screen.getByText("Recent Abnormal Tasks")).not.toBeNull();
+    expect(screen.getByText(/Execution failure blocked task/i)).not.toBeNull();
+    expect(screen.getByText("Global Watched Feed")).not.toBeNull();
   });
 
   it("surfaces retry and block execution summaries in task detail", async () => {
@@ -325,9 +425,13 @@ describe("App", () => {
     }
     fireEvent.click(schedulerFilter);
 
-    await screen.findByText("scheduler / tick_started");
-    expect(screen.queryByText("agent / offline")).toBeNull();
-    expect(screen.queryByText("execution / retry_scheduled")).toBeNull();
+    const liveSection = screen.getByText("Live Event Stream").closest("section");
+    if (!liveSection) {
+      throw new Error("live event section not found");
+    }
+    await within(liveSection).findByText("scheduler / tick_started");
+    expect(within(liveSection).queryByText("agent / offline")).toBeNull();
+    expect(within(liveSection).queryByText("execution / retry_scheduled")).toBeNull();
   });
 
   it("shows reconnect banner and reconnects the live event stream", async () => {
@@ -357,6 +461,16 @@ describe("App", () => {
           tasks: { total: 0, byStatus: {} },
           agents: { total: 0, byStatus: {} },
           plugins: { total: 0, healthy: 0 }
+        });
+      }
+      if (url.endsWith("/ops/events")) {
+        return jsonResponse({
+          focusEventTypes: [],
+          watchedEventCount: 0,
+          eventTypeCounts: {},
+          eventTypeRanking: [],
+          recentWatchedEvents: [],
+          recentAbnormalTasks: []
         });
       }
       if (url.endsWith("/tasks")) {

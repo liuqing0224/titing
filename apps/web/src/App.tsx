@@ -15,6 +15,28 @@ type DashboardData = {
   };
 };
 
+type OpsSnapshot = {
+  focusEventTypes: string[];
+  watchedEventCount: number;
+  eventTypeCounts: Record<string, number>;
+  eventTypeRanking: Array<{
+    eventType: string;
+    count: number;
+  }>;
+  recentWatchedEvents: EventItem[];
+  recentAbnormalTasks: Array<{
+    taskId: string;
+    title: string;
+    status: string;
+    traceId: string;
+    eventType: string;
+    message: string;
+    createdAt: string;
+    retryCount: number;
+    repairCount: number;
+  }>;
+};
+
 type Task = {
   id: string;
   title: string;
@@ -55,6 +77,28 @@ type PluginConfig = {
   enabled: boolean;
   priority: number;
   config: Record<string, unknown>;
+};
+
+type MeegleAuthStart = {
+  status: "pending";
+  authenticated: false;
+  authorizationUrl: string;
+  deviceCode: string;
+  clientId: string;
+  intervalSeconds: number;
+  expiresInSeconds: number;
+  message: string;
+};
+
+type MeegleAuthPoll = {
+  status: "pending" | "authenticated" | "failed" | "expired";
+  authenticated: boolean;
+  message: string;
+};
+
+type MeegleAuthUiState = {
+  status: "idle" | "starting" | MeegleAuthPoll["status"];
+  message: string;
 };
 
 type Readiness = {
@@ -164,6 +208,7 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3000/api
 
 export default function App() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [opsSnapshot, setOpsSnapshot] = useState<OpsSnapshot | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [plugins, setPlugins] = useState<Plugin[]>([]);
@@ -177,6 +222,10 @@ export default function App() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [meegleAuth, setMeegleAuth] = useState<MeegleAuthUiState>({
+    status: "idle",
+    message: ""
+  });
   const [streamStatus, setStreamStatus] = useState<StreamStatus>("connecting");
   const [streamRetryToken, setStreamRetryToken] = useState(0);
   const [taskQuery, setTaskQuery] = useState("");
@@ -297,8 +346,9 @@ export default function App() {
   async function refreshAll(): Promise<void> {
     setIsRefreshing(true);
     try {
-      const [dashboardResponse, tasksResponse, agentsResponse, pluginsResponse, pluginConfigsResponse, readinessResponse] = await Promise.all([
+      const [dashboardResponse, opsResponse, tasksResponse, agentsResponse, pluginsResponse, pluginConfigsResponse, readinessResponse] = await Promise.all([
         fetchJson<DashboardData>("/dashboard"),
+        fetchJson<OpsSnapshot>("/ops/events"),
         fetchJson<Task[]>("/tasks"),
         fetchJson<Agent[]>("/agents"),
         fetchJson<Plugin[]>("/plugins"),
@@ -306,6 +356,7 @@ export default function App() {
         fetchJson<Readiness>("/readiness")
       ]);
       setDashboard(dashboardResponse);
+      setOpsSnapshot(opsResponse);
       setTasks(tasksResponse);
       setAgents(agentsResponse);
       setPlugins(pluginsResponse);
@@ -360,6 +411,47 @@ export default function App() {
       setDetailError(null);
     } catch (actionError) {
       setDetailError(actionError instanceof Error ? actionError.message : String(actionError));
+    }
+  }
+
+  async function startMeegleAuthorization(): Promise<void> {
+    setMeegleAuth({ status: "starting", message: "Starting Meegle authorization..." });
+    try {
+      const started = await postJson<MeegleAuthStart>("/integrations/meegle/auth/start");
+      window.open(started.authorizationUrl, "_blank", "noopener,noreferrer");
+      setMeegleAuth({ status: "pending", message: started.message });
+      await pollMeegleAuthorization(started);
+    } catch (authError) {
+      setMeegleAuth({
+        status: "failed",
+        message: authError instanceof Error ? authError.message : String(authError)
+      });
+    }
+  }
+
+  async function pollMeegleAuthorization(input: MeegleAuthStart): Promise<void> {
+    try {
+      const result = await postJson<MeegleAuthPoll>("/integrations/meegle/auth/poll", {
+        deviceCode: input.deviceCode,
+        clientId: input.clientId,
+        intervalSeconds: input.intervalSeconds,
+        expiresInSeconds: input.expiresInSeconds
+      });
+      setMeegleAuth({ status: result.status, message: result.message });
+      if (result.authenticated) {
+        await refreshAll();
+        return;
+      }
+      if (result.status === "pending") {
+        window.setTimeout(() => {
+          void pollMeegleAuthorization(input);
+        }, Math.max(input.intervalSeconds, 1) * 1000);
+      }
+    } catch (authError) {
+      setMeegleAuth({
+        status: "failed",
+        message: authError instanceof Error ? authError.message : String(authError)
+      });
     }
   }
 
@@ -418,6 +510,102 @@ export default function App() {
         <StatCard title="Tasks" value={dashboard?.tasks.total ?? 0} detail={formatCounts(dashboard?.tasks.byStatus ?? {})} />
         <StatCard title="Agents" value={dashboard?.agents.total ?? 0} detail={formatCounts(dashboard?.agents.byStatus ?? {})} />
         <StatCard title="Plugins" value={dashboard?.plugins.total ?? 0} detail={`${dashboard?.plugins.healthy ?? 0} healthy`} />
+      </section>
+
+      <section className="panel ops-panel">
+        <div className="panel-header">
+          <div>
+            <h2>Global Event / Ops</h2>
+            <p className="meta detail-subtitle">
+              Focus on blocked, retry-scheduled, scheduler skipped, offline agents, and skipped integrations.
+            </p>
+          </div>
+          <span>{opsSnapshot?.watchedEventCount ?? 0}</span>
+        </div>
+
+        <div className="ops-summary-grid">
+          <StatCard title="Watched Events" value={opsSnapshot?.watchedEventCount ?? 0} detail={formatCounts(opsSnapshot?.eventTypeCounts ?? {})} />
+          <StatCard
+            title="Abnormal Tasks"
+            value={opsSnapshot?.recentAbnormalTasks.length ?? 0}
+            detail={opsSnapshot?.recentAbnormalTasks[0] ? `latest ${formatEventLabel(opsSnapshot.recentAbnormalTasks[0].eventType)}` : "none"}
+          />
+          <StatCard
+            title="Top Event"
+            value={opsSnapshot?.eventTypeRanking[0]?.count ?? 0}
+            detail={opsSnapshot?.eventTypeRanking[0] ? formatEventLabel(opsSnapshot.eventTypeRanking[0].eventType) : "none"}
+          />
+        </div>
+
+        <div className="ops-grid">
+          <article className="detail-card ops-card">
+            <div className="subpanel-header">
+              <h3>EventType Ranking</h3>
+              <span>{opsSnapshot?.eventTypeRanking.length ?? 0}</span>
+            </div>
+            <div className="timeline-list compact-list">
+              {(opsSnapshot?.eventTypeRanking ?? []).map((item) => (
+                <article className={`timeline-item event-${classifyEventTone(item.eventType)}`} key={item.eventType}>
+                  <div>
+                    <p className="timeline-title">{formatEventLabel(item.eventType)}</p>
+                    <p className="meta">recent abnormal signal</p>
+                  </div>
+                  <p className="mono">count {item.count}</p>
+                </article>
+              ))}
+              {(opsSnapshot?.eventTypeRanking ?? []).length === 0 ? <div className="empty-state">No watched ops events yet.</div> : null}
+            </div>
+          </article>
+
+          <article className="detail-card ops-card">
+            <div className="subpanel-header">
+              <h3>Recent Abnormal Tasks</h3>
+              <span>{opsSnapshot?.recentAbnormalTasks.length ?? 0}</span>
+            </div>
+            <div className="timeline-list compact-list">
+              {(opsSnapshot?.recentAbnormalTasks ?? []).map((item) => (
+                <button className="ops-task-row" key={`${item.taskId}-${item.eventType}-${item.createdAt}`} onClick={() => setSelectedTaskId(item.taskId)} type="button">
+                  <div>
+                    <p className="timeline-title">
+                      {item.title}
+                      <span className={`badge status-${item.status}`}>{item.status}</span>
+                    </p>
+                    <p className="meta">
+                      {formatEventLabel(item.eventType)} · retry {item.retryCount} · repair {item.repairCount}
+                    </p>
+                    <p className="event-context">{item.message}</p>
+                  </div>
+                  <p className="mono">{formatDate(item.createdAt)}</p>
+                </button>
+              ))}
+              {(opsSnapshot?.recentAbnormalTasks ?? []).length === 0 ? <div className="empty-state">No abnormal tasks detected in the current event window.</div> : null}
+            </div>
+          </article>
+
+          <article className="detail-card ops-card">
+            <div className="subpanel-header">
+              <h3>Global Watched Feed</h3>
+              <span>{opsSnapshot?.recentWatchedEvents.length ?? 0}</span>
+            </div>
+            <div className="timeline-list compact-list">
+              {(opsSnapshot?.recentWatchedEvents ?? []).map((event) => (
+                <article className={`timeline-item event-${classifyEventTone(event.eventType)}`} key={event.id}>
+                  <div>
+                    <p className="timeline-title">
+                      {formatEventLabel(event.eventType)}
+                      <span className={`event-pill event-${classifyEventTone(event.eventType)}`}>
+                        {classifyEventTone(event.eventType)}
+                      </span>
+                    </p>
+                    <p className="meta">{eventSummary(event)}</p>
+                  </div>
+                  <p className="mono">{event.createdAt ? formatDate(event.createdAt) : "live"}</p>
+                </article>
+              ))}
+              {(opsSnapshot?.recentWatchedEvents ?? []).length === 0 ? <div className="empty-state">No watched feed events yet.</div> : null}
+            </div>
+          </article>
+        </div>
       </section>
 
       <main className="console-grid">
@@ -779,6 +967,31 @@ export default function App() {
                   {selectedPluginConfig?.priority ?? selectedPlugin.priority}
                 </p>
                 <p>{selectedPlugin.health.message}</p>
+                {selectedPlugin.id === "meegle" ? (
+                  <div className="config-block">
+                    <div className="subpanel-header">
+                      <p className="eyebrow compact">Meegle Authorization</p>
+                      <span className={`badge ${meegleAuth.status === "authenticated" || selectedPlugin.health.healthy ? "status-done" : "status-failed"}`}>
+                        {meegleAuth.status === "idle" ? (selectedPlugin.health.healthy ? "authenticated" : "required") : meegleAuth.status}
+                      </span>
+                    </div>
+                    <p className="meta">
+                      {meegleAuth.message || (selectedPlugin.health.healthy
+                        ? "Meegle CLI is ready."
+                        : "Authorize Meegle before polling work items or writing comments.")}
+                    </p>
+                    {!selectedPlugin.health.healthy && meegleAuth.status !== "authenticated" ? (
+                      <button
+                        className="primary-button"
+                        disabled={meegleAuth.status === "starting" || meegleAuth.status === "pending"}
+                        onClick={() => void startMeegleAuthorization()}
+                        type="button"
+                      >
+                        {meegleAuth.status === "starting" || meegleAuth.status === "pending" ? "Authorizing Meegle..." : "Authorize Meegle"}
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
                 <p className="mono">{selectedPlugin.capabilities.join(", ") || "no capabilities"}</p>
                 <div className="detail-metrics plugin-metrics">
                   <Metric
@@ -829,11 +1042,16 @@ async function fetchJson<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-async function postJson(path: string): Promise<void> {
-  const response = await fetch(`${API_BASE}${path}`, { method: "POST" });
+async function postJson<T = unknown>(path: string, body?: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status}`);
   }
+  return response.json() as Promise<T>;
 }
 
 function formatCounts(counts: Record<string, number>): string {
