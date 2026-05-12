@@ -781,6 +781,19 @@ export class TitingServices {
           break;
         }
 
+        if (isWorkflowPromptsFailure(result)) {
+          await this.updateExecutionStatus(execution, currentTask, "failed", result.summary, {
+            sessionId: result.sessionId,
+            errorCategory: result.errorCategory,
+            timeoutCategory: result.timeoutCategory
+          });
+          currentTask = await this.transitionTask(currentTask, "failed", result.summary, executionPlugin.id, execution);
+          currentTask.completedAt = this.now();
+          await this.deps.tasks.save(currentTask);
+          await this.reportTaskResultIfNeeded(currentTask, result.summary);
+          break;
+        }
+
         if (!qualityPlugin) {
           const correlation = this.buildCorrelation({ task: currentTask, execution, agentId: agent.id });
           await this.appendExecutionLog(
@@ -1114,7 +1127,7 @@ export class TitingServices {
       await this.reportTaskResultIfNeeded(failedTask, message);
     } finally {
       stopHeartbeat();
-      if (workspace) {
+      if (workspace && isTerminalTaskStatus(currentTask.status)) {
         await environment.cleanupWorkspace(currentTask, workspace);
       }
       await this.releaseAgent(agent);
@@ -1833,6 +1846,14 @@ function appendHumanGuidanceConstraint(constraints: string[], body: string): str
 
 function trimReplyIds(replyIds: string[]): string[] {
   return replyIds.slice(-20);
+}
+
+function isTerminalTaskStatus(status: TaskStatus): boolean {
+  return ["done", "failed", "blocked", "needs_human", "cancelled"].includes(status);
+}
+
+function isWorkflowPromptsFailure(result: ExecutionResult): boolean {
+  return result.metadata.workflowStage === "workflow-prompts";
 }
 
 function readHumanLoopMetadata(metadata: Record<string, unknown>): {

@@ -1,5 +1,5 @@
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -200,6 +200,10 @@ describe("Execution plugins", () => {
     try {
       const repoPath = join(sandbox, "repo");
       await mkdir(repoPath, { recursive: true });
+      await writeWorkflowPrompts(repoPath, {
+        root: false,
+        content: buildWorkflowPrompts(["Implement"])
+      });
       const bin = join(sandbox, "fake-codex");
       await writeFile(
         bin,
@@ -240,11 +244,80 @@ console.log(JSON.stringify({ session_id: "11111111-1111-4111-8111-111111111111" 
     }
   });
 
+  it("reads workflow prompts from the repo root fallback and executes all workflow nodes", async () => {
+    const sandbox = await mkdtemp(join(tmpdir(), "titing-codex-"));
+    try {
+      const repoPath = join(sandbox, "repo");
+      await mkdir(repoPath, { recursive: true });
+      await writeWorkflowPrompts(repoPath, {
+        root: true,
+        content: buildWorkflowPrompts(["Plan", "Implement"])
+      });
+      const bin = join(sandbox, "fake-codex");
+      await writeFile(
+        bin,
+        `#!/usr/bin/env node
+const fs = require("fs");
+const args = process.argv.slice(2);
+const outputIndex = args.indexOf("-o");
+const prompt = args.at(-1) || "";
+const node = prompt.includes("Implement") ? "implement" : "plan";
+if (outputIndex >= 0) fs.writeFileSync(args[outputIndex + 1], node + " summary");
+console.log(JSON.stringify({ session_id: "11111111-1111-4111-8111-111111111111" }));
+`
+      );
+      await execFileAsync("chmod", ["+x", bin]);
+
+      const plugin = new CodexExecutionPlugin(bin, 60_000);
+      await mkdir(join(sandbox, "artifacts"), { recursive: true });
+      const workspace = createWorkspace(sandbox, repoPath);
+      const result = await plugin.execute(createTask(repoPath), workspace, null);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.summary).toContain("Plan: plan summary");
+      expect(result.summary).toContain("Implement: implement summary");
+      expect(result.metadata).toEqual(expect.objectContaining({
+        workflowPromptsPath: join(repoPath, "WORKFLOW_PROMPTS.md"),
+        workflowNodeNames: ["Plan", "Implement"]
+      }));
+    } finally {
+      await rm(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("fails with a workflow-prompts error when the repo has no WORKFLOW_PROMPTS.md", async () => {
+    const sandbox = await mkdtemp(join(tmpdir(), "titing-codex-"));
+    try {
+      const repoPath = join(sandbox, "repo");
+      await mkdir(repoPath, { recursive: true });
+      const bin = join(sandbox, "fake-codex");
+      await writeFile(bin, "#!/usr/bin/env node\nprocess.exit(0);\n");
+      await execFileAsync("chmod", ["+x", bin]);
+
+      const plugin = new CodexExecutionPlugin(bin, 60_000);
+      await mkdir(join(sandbox, "artifacts"), { recursive: true });
+      const workspace = createWorkspace(sandbox, repoPath);
+      const result = await plugin.execute(createTask(repoPath), workspace, null);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.summary).toBe("Project WORKFLOW_PROMPTS.md is missing or invalid");
+      expect(result.metadata).toEqual(expect.objectContaining({
+        workflowStage: "workflow-prompts"
+      }));
+    } finally {
+      await rm(sandbox, { recursive: true, force: true });
+    }
+  });
+
   it("creates and reuses Cursor chat sessions", async () => {
     const sandbox = await mkdtemp(join(tmpdir(), "titing-cursor-"));
     try {
       const repoPath = join(sandbox, "repo");
       await mkdir(repoPath, { recursive: true });
+      await writeWorkflowPrompts(repoPath, {
+        root: false,
+        content: buildWorkflowPrompts(["Implement"])
+      });
       const bin = join(sandbox, "fake-cursor");
       await writeFile(
         bin,
@@ -284,6 +357,53 @@ process.exit(1);
       expect(first.sessionId).toBe("cursor:chat-123");
       expect(first.summary).toBe("cursor resumed");
       expect(resumed?.summary).toBe("cursor resumed");
+    } finally {
+      await rm(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("applies workflow node loops within a single Cursor execution", async () => {
+    const sandbox = await mkdtemp(join(tmpdir(), "titing-cursor-"));
+    try {
+      const repoPath = join(sandbox, "repo");
+      await mkdir(repoPath, { recursive: true });
+      await writeWorkflowPrompts(repoPath, {
+        root: false,
+        content: buildWorkflowPrompts(["Implement"], {
+          Implement: { loopEnabled: true, maxLoops: 2 }
+        })
+      });
+      const bin = join(sandbox, "fake-cursor");
+      await writeFile(
+        bin,
+        `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "create-chat") {
+  console.log("chat-123");
+  process.exit(0);
+}
+if (args[0] === "agent") {
+  console.log(JSON.stringify({ text: "cursor resumed" }));
+  process.exit(0);
+}
+process.exit(1);
+`
+      );
+      await execFileAsync("chmod", ["+x", bin]);
+
+      const plugin = new CursorExecutionPlugin(bin, 60_000);
+      await mkdir(join(sandbox, "artifacts"), { recursive: true });
+      const workspace = createWorkspace(sandbox, repoPath);
+      const result = await plugin.execute(createTask(repoPath), workspace, null);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.metadata).toEqual(expect.objectContaining({
+        workflowNodeNames: ["Implement"],
+        nodeExecutions: [
+          expect.objectContaining({ node: "Implement", iteration: 1, loopCount: 2 }),
+          expect.objectContaining({ node: "Implement", iteration: 2, loopCount: 2 })
+        ]
+      }));
     } finally {
       await rm(sandbox, { recursive: true, force: true });
     }
@@ -899,6 +1019,43 @@ function createTask(repo: string): TitingTask {
     createdAt: now,
     updatedAt: now
   };
+}
+
+async function writeWorkflowPrompts(
+  repoPath: string,
+  input: { root: boolean; content: string }
+): Promise<void> {
+  const target = input.root
+    ? join(repoPath, "WORKFLOW_PROMPTS.md")
+    : join(repoPath, "knowledge", "WORKFLOW_PROMPTS.md");
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(target, input.content);
+}
+
+function buildWorkflowPrompts(
+  nodeNames: string[],
+  config: Record<string, { loopEnabled?: boolean; maxLoops?: number }> = {}
+): string {
+  const workflow = nodeNames.map((nodeName) => `- \`${nodeName}\``).join("\n");
+  const sections = nodeNames.map((nodeName) => {
+    const nodeConfig = config[nodeName] ?? {};
+    return `### ${nodeName}
+
+\`\`\`text
+${nodeName} for {{taskTitle}}
+\`\`\`
+
+- \`loopEnabled: ${nodeConfig.loopEnabled ? "true" : "false"}\`
+- \`maxLoops: ${nodeConfig.maxLoops ?? 1}\``;
+  }).join("\n\n");
+  return `## Agents 默认执行流程
+
+${workflow}
+
+## 节点 Prompt 模板
+
+${sections}
+`;
 }
 
 async function createGitRepo(path: string, files: Record<string, string>): Promise<void> {

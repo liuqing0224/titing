@@ -119,6 +119,74 @@ describe("TitingServices", () => {
     expect(harness.tasks.get("task-4")?.status).toBe("done");
   });
 
+  it("fails immediately when workflow prompts are missing or invalid", async () => {
+    const harness = createHarness({
+      tasks: [createTask({ id: "task-4w", status: "queued" })],
+      executions: [
+        createExecutionResult({
+          exitCode: 1,
+          errorCategory: "command_failed",
+          summary: "Project WORKFLOW_PROMPTS.md is missing or invalid",
+          stderr: "Unable to locate WORKFLOW_PROMPTS.md in /tmp/task/repo",
+          metadata: {
+            workflowStage: "workflow-prompts",
+            workflowError: "Unable to locate WORKFLOW_PROMPTS.md in /tmp/task/repo"
+          }
+        })
+      ]
+    });
+
+    await harness.services.runSchedulerTick();
+
+    expect(harness.tasks.get("task-4w")?.status).toBe("failed");
+    expect(harness.qualityPlugin.calls).toEqual([]);
+    expect(harness.transitions.map((item) => `${item.from}->${item.to}`)).toEqual([
+      "queued->running",
+      "running->failed"
+    ]);
+  });
+
+  it("reuses the prepared workspace across repair iterations and cleans up only after completion", async () => {
+    const harness = createHarness({
+      tasks: [createTask({ id: "task-4r", status: "queued" })],
+      executions: [
+        createExecutionResult({ exitCode: 1, sessionId: "codex:s1", errorCategory: "command_failed", summary: "first failed" }),
+        createExecutionResult({ exitCode: 0, sessionId: "codex:s1", summary: "recovered" })
+      ],
+      qualityResults: [
+        {
+          passed: false,
+          score: 50,
+          riskLevel: "medium",
+          checks: [{ name: "build", passed: false, detail: "bad" }],
+          report: { diff: { filesChanged: 1, insertions: 3, deletions: 1 } }
+        },
+        {
+          passed: true,
+          score: 100,
+          riskLevel: "low",
+          checks: [{ name: "build", passed: true, detail: "ok" }],
+          report: { diff: { filesChanged: 1, insertions: 5, deletions: 0 } }
+        }
+      ]
+    });
+
+    await harness.services.runSchedulerTick();
+
+    expect(harness.environmentPlugin.calls).toEqual({
+      prepareWorkspace: 1,
+      cleanupWorkspace: 1
+    });
+    expect(harness.executionPlugin.calls).toEqual(["execute", "continue:codex:s1"]);
+    expect(harness.transitions.map((item) => `${item.from}->${item.to}`)).toEqual([
+      "queued->running",
+      "running->evaluating",
+      "evaluating->repairing",
+      "repairing->evaluating",
+      "evaluating->done"
+    ]);
+  });
+
   it("completes goal loop on the first successful evaluation without creating a repair goal", async () => {
     const harness = createHarness({
       tasks: [createTask({ id: "task-4a", status: "queued" })],
@@ -1182,6 +1250,7 @@ function createHarness(input: {
 
   const executionPlugin = createExecutionPlugin(input.executions);
   const qualityPlugin = createQualityPlugin(input.qualityResults ?? []);
+  const environmentPlugin = createEnvironmentPlugin(input.environmentError);
 
   const services = new TitingServices({
     tasks: new InMemoryTaskRepository(tasks),
@@ -1236,7 +1305,7 @@ function createHarness(input: {
     },
     runtime: new PluginRuntime([
       createTaskIntegrationPlugin(input.pulledTasks ?? [], input.humanReplies ?? [], reportedResults, reportedNeedsHuman),
-      createEnvironmentPlugin(input.environmentError),
+      environmentPlugin,
       executionPlugin,
       ...(input.qualityEnabled === false ? [] : [qualityPlugin]),
       ...(input.governancePlugin ? [input.governancePlugin] : [])
@@ -1265,6 +1334,7 @@ function createHarness(input: {
     evalResults,
     repairGoals,
     events,
+    environmentPlugin,
     executionPlugin,
     qualityPlugin,
     reportedResults,
@@ -1387,13 +1457,19 @@ class InMemoryAgentRepository implements AgentRepository {
 }
 
 function createEnvironmentPlugin(error?: Error) {
+  const calls = {
+    prepareWorkspace: 0,
+    cleanupWorkspace: 0
+  };
   return {
     id: "env",
     kind: "environment" as const,
     priority: 100,
     capabilities: ["local"],
+    calls,
     health: async () => ({ healthy: true, message: "ok" }),
     prepareWorkspace: async () => {
+      calls.prepareWorkspace += 1;
       if (error) {
         throw error;
       }
@@ -1406,7 +1482,9 @@ function createEnvironmentPlugin(error?: Error) {
         env: {}
       } satisfies PreparedWorkspace;
     },
-    cleanupWorkspace: async () => {}
+    cleanupWorkspace: async () => {
+      calls.cleanupWorkspace += 1;
+    }
   };
 }
 

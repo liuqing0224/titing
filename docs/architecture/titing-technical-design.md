@@ -69,6 +69,7 @@ Transitions are only legal through the state machine. Every transition emits a s
 ### ExecutionPlugin
 
 - Prepare executor-specific input
+- Resolve `WORKFLOW_PROMPTS.md` workflow definitions
 - Execute a task or continue a session
 - Capture stdout, stderr, exit code, session metadata
 
@@ -89,6 +90,29 @@ Transitions are only legal through the state machine. Every transition emits a s
 - Record structured events
 - Export health signals
 - Enforce command policy, redaction, secret scanning, and risk blocking
+
+## Workflow Prompt System
+
+Execution plugins treat `WORKFLOW_PROMPTS.md` as a first-class control input.
+
+Lookup order:
+
+- `knowledge/WORKFLOW_PROMPTS.md`
+- `WORKFLOW_PROMPTS.md`
+
+Supported workflow semantics:
+
+- parse default node order from the workflow section
+- parse node-local prompt templates from `### <Node>` sections
+- parse node-local `loopEnabled` / `maxLoops` configuration
+- render variables from task and workspace context
+- execute workflow nodes sequentially within one execution session
+
+Failure semantics:
+
+- missing or invalid `WORKFLOW_PROMPTS.md` fails the task before quality evaluation
+- node-local workflow loops stay inside a single execution
+- controller-level `repairing` remains an execution-to-execution loop and is not replaced by workflow loops
 
 ## Data Model
 

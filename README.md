@@ -29,11 +29,20 @@ docs/
 - 任务状态机：`created -> validated -> pending -> queued -> running -> evaluating -> repairing -> done`
 - Goal Loop：支持 repair continuation、重复失败识别、no-diff 停止、高风险阻断
 - 工程环境：repo cache、git worktree、依赖安装、artifact 保留、失败清理策略
-- 执行器：Codex / Cursor CLI，结构化 session/summary/errorCategory 返回
+- 执行器：Codex / Cursor CLI，支持从 `WORKFLOW_PROMPTS.md` 解析节点 workflow，并返回结构化 session/summary/errorCategory
 - 质量闭环：`lint / typecheck / test / build` + diff risk
 - 治理：secret scan、命令 allow/block policy、输出脱敏、评测后风险阻断
 - 观测：execution logs、SSE、trace 聚合查询、任务诊断脚本
 - 任务接入：手工创建、Meegle polling、Meegle webhook
+
+## Workflow Prompt System
+
+目标仓库可通过以下任一文件声明执行 workflow：
+
+- `knowledge/WORKFLOW_PROMPTS.md`
+- `WORKFLOW_PROMPTS.md`
+
+执行器会解析默认节点顺序、节点 prompt 模板与 `loopEnabled` / `maxLoops` 配置，并在同一个 workspace 中按节点顺序执行。缺失或格式错误时，任务会在执行前失败，而不会回退到旧的单 prompt 模式。
 
 ## 快速开始
 
