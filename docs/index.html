@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>蹄听 | AI Engineering Execution Controller</title>
+    <meta
+      name="description"
+      content="蹄听 是一个 local-first 的 AI 工程执行控制器，负责调度、执行、评测、Goal Loop、观测与治理。"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span> Titing</p>
+        <h1>
+          把 AI 工程执行，变成一套<span class="hero-accent">清晰、可治理</span>的系统。
+        </h1>
+        <p class="lede">
+          蹄听 是一个 local-first 的 AI 工程执行控制器，负责任务生命周期、调度、执行、评测、Goal Loop、观测与治理。
+        </p>
+        <ul class="hero-tags" aria-label="要点">
+          <li>Local-first</li>
+          <li>任务状态机</li>
+          <li>Goal Loop</li>
+          <li>插件化</li>
+        </ul>
+        <div class="hero-actions">
+          <a class="button button-primary" href="#quickstart">快速开始</a>
+          <a class="button button-secondary" href="#overview">查看说明</a>
+        </div>
+      </header>
+
+      <main>
+        <section class="section" id="overview">
+          <p class="section-label">Overview</p>
+          <h2>它解决什么问题</h2>
+          <p>
+            当 AI 开始真正参与工程交付，问题不再只是“能不能生成代码”，而是任务如何接入、怎么调度、何时停止、谁来接管，以及整个过程能不能被追踪和治理。
+          </p>
+          <p>
+            Titing 把这些问题收敛到同一套运行时里，让任务从接入到交付都沿着明确的状态机推进，而不是散落在脚本、临时约定和人工操作之间。
+          </p>
+        </section>
+
+        <section class="section">
+          <p class="section-label">Capabilities</p>
+          <h2>核心能力</h2>
+          <ul class="list">
+            <li>统一任务生命周期管理：创建、调度、执行、评测、修复、人工接管。</li>
+            <li>local-first 运行方式：围绕本地 worktree、SQLite 与 CLI 执行器组织执行。</li>
+            <li>插件化扩展：接入、环境、执行、质量、治理都通过稳定契约解耦。</li>
+            <li>质量与风险控制：支持 lint、类型检查、测试、构建与 diff 风险评估。</li>
+          </ul>
+        </section>
+
+        <section class="section">
+          <p class="section-label">Flow</p>
+          <h2>执行流程</h2>
+          <ol class="steps">
+            <li>接入任务：手动创建、轮询或 Webhook 统一进入同一任务模型。</li>
+            <li>调度执行：根据插件健康度、执行器能力和环境状态分配任务。</li>
+            <li>运行评测：执行工作流，随后进入质量检查与结果评估。</li>
+            <li>修复或停机：失败进入 repair loop；高风险或重复失败时转人工接管。</li>
+          </ol>
+        </section>
+
+        <section class="section" id="quickstart">
+          <p class="section-label">Quickstart</p>
+          <h2>本地启动</h2>
+          <div class="code-block">
+            <code>npm install</code>
+            <code>npm run migration:run -w apps/server</code>
+            <code>npm run dev:backend</code>
+            <code>npm run dev:frontend</code>
+          </div>
+          <p class="note">默认地址：Web `http://localhost:5173`，API `http://localhost:3000/api`</p>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
