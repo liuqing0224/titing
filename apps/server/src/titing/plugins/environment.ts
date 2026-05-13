@@ -15,7 +15,7 @@ import {
 
 /**
  * Prepares an isolated git worktree per task from a shared mirror cache under `repoCacheRoot`, then optional `npm install`.
- * Cleanup removes the worktree via git and may delete the whole task workspace dir based on `cleanupOnSuccess` / `cleanupOnFailure`.
+ * Cleanup is fully gated by `cleanupOnSuccess` / `cleanupOnFailure`; when disabled, the repo worktree and task workspace are preserved.
  */
 export class LocalWorktreeEnvironmentPlugin implements EnvironmentPlugin {
   readonly id = "git-worktree-local";
@@ -119,18 +119,21 @@ export class LocalWorktreeEnvironmentPlugin implements EnvironmentPlugin {
   }
 
   /**
-   * Best-effort `git worktree remove` using the mirror at `workspace.cachePath`, then optionally rimraf the task folder.
+   * Best-effort `git worktree remove` using the mirror at `workspace.cachePath`, then rimraf the task folder.
+   * When cleanup is disabled for the terminal status, preserve the full workspace including the repo worktree.
    */
   async cleanupWorkspace(task: TitingTask, workspace: PreparedWorkspace): Promise<void> {
+    const shouldDelete =
+      (task.status === "done" && this.config.workspace.cleanupOnSuccess) ||
+      (task.status !== "done" && this.config.workspace.cleanupOnFailure);
+    if (!shouldDelete) {
+      return;
+    }
+
     try {
       await this.removeRegisteredWorktree(workspace.cachePath, workspace.repoPath);
     } finally {
-      const shouldDelete =
-        (task.status === "done" && this.config.workspace.cleanupOnSuccess) ||
-        (task.status !== "done" && this.config.workspace.cleanupOnFailure);
-      if (shouldDelete) {
-        await rm(workspace.workspacePath, { recursive: true, force: true });
-      }
+      await rm(workspace.workspacePath, { recursive: true, force: true });
     }
   }
 

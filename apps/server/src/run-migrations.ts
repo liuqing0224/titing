@@ -1,3 +1,6 @@
+/**
+ * CLI：仅验证连接并执行 `schema_migrations` 管理的 SQL 迁移，供部署或运维脚本调用。
+ */
 import { createDatabase } from "./titing/database";
 import { runMigrations } from "./titing/migration-runner";
 import { formatStartupError, verifyDatabaseConnection } from "./titing/startup-errors";

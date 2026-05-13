@@ -11,23 +11,34 @@ describe("external plugins", () => {
       const modulePath = join(sandbox, "quality-plugin.cjs");
       await writeFile(modulePath, `
 module.exports = {
-  createPlugin() {
+  createPluginPackage() {
     return {
-      id: "external-quality",
-      kind: "quality",
-      priority: 250,
-      capabilities: ["default"],
-      async health() {
-        return { healthy: true, message: "external quality ready" };
+      manifest: {
+        id: "external-quality-package",
+        displayName: "External Quality",
+        version: "1.0.0",
+        kind: "quality",
+        capabilities: [{ kind: "quality", capability: "default", priority: 250 }]
       },
-      async evaluate() {
-        return {
-          passed: true,
-          score: 100,
-          riskLevel: "low",
-          checks: [],
-          report: {}
-        };
+      createPlugins() {
+        return [{
+          id: "external-quality",
+          kind: "quality",
+          priority: 250,
+          capabilities: ["default"],
+          async health() {
+            return { healthy: true, message: "external quality ready" };
+          },
+          async evaluate() {
+            return {
+              passed: true,
+              score: 100,
+              riskLevel: "low",
+              checks: [],
+              report: {}
+            };
+          }
+        }];
       }
     };
   }
@@ -65,33 +76,25 @@ module.exports = {
       const modulePath = join(sandbox, "wrong-kind.cjs");
       await writeFile(modulePath, `
 module.exports = {
-  createPlugin() {
+  createPluginPackage() {
     return {
-      id: "wrong-kind",
-      kind: "environment",
-      priority: 100,
-      capabilities: ["local"],
-      async health() {
-        return { healthy: true, message: "ok" };
+      manifest: {
+        id: "wrong-kind-package",
+        displayName: "Wrong Kind",
+        version: "1.0.0",
+        kind: "environment",
+        capabilities: [{ kind: "environment", capability: "local", priority: 100 }]
       },
-      async prepareWorkspace() {
-        return {
-          workspacePath: "/tmp/workspace",
-          repoPath: "/tmp/workspace/repo",
-          branch: "main",
-          cachePath: "/tmp/cache",
-          artifactsPath: "/tmp/artifacts",
-          env: {}
-        };
-      },
-      async cleanupWorkspace() {}
+      createPlugins() {
+        return [];
+      }
     };
   }
 };
 `, "utf8");
 
       await expect(loadExternalPlugin("quality", modulePath, createConfig())).rejects.toThrow(
-        `External plugin package ${modulePath} returned kind environment, expected quality`
+        `External plugin package ${modulePath} returned manifest kind mismatch for quality`
       );
     } finally {
       await rm(sandbox, { recursive: true, force: true });
@@ -105,7 +108,46 @@ module.exports = {
       await writeFile(modulePath, "module.exports = {};\n", "utf8");
 
       await expect(loadExternalPlugin("log", modulePath, createConfig())).rejects.toThrow(
-        `External plugin package ${modulePath} must export createPlugin()`
+        `External plugin package ${modulePath} must export createPluginPackage()`
+      );
+    } finally {
+      await rm(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects plugins missing required kind-specific methods", async () => {
+    const sandbox = await mkdtemp(join(tmpdir(), "titing-external-contract-"));
+    try {
+      const modulePath = join(sandbox, "invalid-quality.cjs");
+      await writeFile(modulePath, `
+module.exports = {
+  createPluginPackage() {
+    return {
+      manifest: {
+        id: "invalid-quality-package",
+        displayName: "Invalid Quality",
+        version: "1.0.0",
+        kind: "quality",
+        capabilities: [{ kind: "quality", capability: "default", priority: 100 }]
+      },
+      createPlugins() {
+        return [{
+          id: "invalid-quality",
+          kind: "quality",
+          priority: 100,
+          capabilities: ["default"],
+          async health() {
+            return { healthy: true, message: "ok" };
+          }
+        }];
+      }
+    };
+  }
+};
+`, "utf8");
+
+      await expect(loadExternalPlugin("quality", modulePath, createConfig())).rejects.toThrow(
+        `External plugin package ${modulePath} is missing required method evaluate() on invalid-quality`
       );
     } finally {
       await rm(sandbox, { recursive: true, force: true });

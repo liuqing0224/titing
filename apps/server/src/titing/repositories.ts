@@ -1,5 +1,7 @@
 import {
   AgentRecord,
+  AgentLease,
+  AgentLeaseRepository,
   AgentRepository,
   EvalResult,
   EvalResultRepository,
@@ -7,6 +9,8 @@ import {
   ExecutionLogRepository,
   ExecutionRecord,
   ExecutionRepository,
+  HumanReview,
+  HumanReviewRepository,
   PluginConfig,
   PluginConfigRepository,
   RepairGoal,
@@ -20,6 +24,10 @@ import {
 import { randomUUID } from "node:crypto";
 import { DatabaseClient } from "./database";
 
+/**
+ * SQLite 上的仓储实现：SQL 与类型名保留 `Pg*` 前缀以对齐 `@titing/plugin-api` 契约与既有迁移。
+ * JSON 列通过带 `schemaVersion` 的信封读写，便于演进（见 `encodeJsonObject` / `decodeJsonObject`）。
+ */
 const JSON_SCHEMA_VERSION = "2026-05-11";
 
 export class PgTaskRepository implements TaskRepository {
@@ -33,10 +41,10 @@ export class PgTaskRepository implements TaskRepository {
     await this.pool.query(
       `insert into tasks (
         id, source, external_id, title, instruction, repo, branch, priority, status, executor, trace_id,
-        constraints_json, acceptance_criteria_json, metadata_json, retry_count, repair_count, started_at,
-        completed_at, created_at, updated_at
+        source_identity, integration_key, constraints_json, acceptance_criteria_json, metadata_json,
+        retry_count, repair_count, started_at, completed_at, created_at, updated_at
       ) values (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22
       )
       on conflict (id) do update set
         source = excluded.source,
@@ -49,6 +57,8 @@ export class PgTaskRepository implements TaskRepository {
         status = excluded.status,
         executor = excluded.executor,
         trace_id = excluded.trace_id,
+        source_identity = excluded.source_identity,
+        integration_key = excluded.integration_key,
         constraints_json = excluded.constraints_json,
         acceptance_criteria_json = excluded.acceptance_criteria_json,
         metadata_json = excluded.metadata_json,
@@ -69,6 +79,8 @@ export class PgTaskRepository implements TaskRepository {
         task.status,
         task.executor,
         task.traceId,
+        task.sourceIdentity ?? null,
+        task.integrationKey ?? null,
         JSON.stringify(encodeJsonArray(task.constraints)),
         JSON.stringify(encodeJsonArray(task.acceptanceCriteria)),
         JSON.stringify(encodeJsonObject(task.metadata)),
@@ -410,11 +422,108 @@ export class PgPluginConfigRepository implements PluginConfigRepository {
   }
 }
 
+export class PgAgentLeaseRepository implements AgentLeaseRepository {
+  constructor(private readonly pool: DatabaseClient) {}
+
+  async create(lease: AgentLease): Promise<void> {
+    await this.pool.query(
+      `insert into agent_leases (
+        id, agent_id, task_id, execution_id, leased_at, lease_expires_at, released_at, release_reason,
+        candidate_agents_json, selection_reason, priority_snapshot_json
+      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        lease.id,
+        lease.agentId,
+        lease.taskId,
+        lease.executionId,
+        lease.leasedAt,
+        lease.leaseExpiresAt,
+        lease.releasedAt,
+        lease.releaseReason,
+        JSON.stringify(encodeJsonArray(lease.candidateAgents)),
+        lease.selectionReason,
+        JSON.stringify(encodeJsonObject(lease.prioritySnapshot))
+      ]
+    );
+  }
+
+  async release(id: string, releasedAt: Date, releaseReason: string): Promise<void> {
+    await this.pool.query(
+      `update agent_leases
+       set released_at = $2,
+           release_reason = $3
+       where id = $1`,
+      [id, releasedAt, releaseReason]
+    );
+  }
+
+  async listActive(): Promise<AgentLease[]> {
+    const result = await this.pool.query("select * from agent_leases where released_at is null order by leased_at desc");
+    return result.rows.map(mapAgentLease);
+  }
+
+  async listByTask(taskId: string): Promise<AgentLease[]> {
+    const result = await this.pool.query("select * from agent_leases where task_id = $1 order by leased_at desc", [taskId]);
+    return result.rows.map(mapAgentLease);
+  }
+}
+
+export class PgHumanReviewRepository implements HumanReviewRepository {
+  constructor(private readonly pool: DatabaseClient) {}
+
+  async create(review: HumanReview): Promise<void> {
+    await this.save(review);
+  }
+
+  async save(review: HumanReview): Promise<void> {
+    await this.pool.query(
+      `insert into human_reviews (
+        id, task_id, execution_id, request_type, reason, external_thread_ref, response_summary, status, created_at, updated_at
+      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      on conflict (id) do update set
+        execution_id = excluded.execution_id,
+        request_type = excluded.request_type,
+        reason = excluded.reason,
+        external_thread_ref = excluded.external_thread_ref,
+        response_summary = excluded.response_summary,
+        status = excluded.status,
+        updated_at = excluded.updated_at`,
+      [
+        review.id,
+        review.taskId,
+        review.executionId,
+        review.requestType,
+        review.reason,
+        review.externalThreadRef,
+        review.responseSummary,
+        review.status,
+        review.createdAt,
+        review.updatedAt
+      ]
+    );
+  }
+
+  async getLatestByTask(taskId: string): Promise<HumanReview | null> {
+    const result = await this.pool.query(
+      "select * from human_reviews where task_id = $1 order by created_at desc limit 1",
+      [taskId]
+    );
+    return result.rows[0] ? mapHumanReview(result.rows[0]) : null;
+  }
+
+  async listByTask(taskId: string): Promise<HumanReview[]> {
+    const result = await this.pool.query("select * from human_reviews where task_id = $1 order by created_at asc", [taskId]);
+    return result.rows.map(mapHumanReview);
+  }
+}
+
 function mapTask(row: Record<string, unknown>): TitingTask {
   return {
     id: String(row.id),
     source: String(row.source),
     externalId: row.external_id ? String(row.external_id) : null,
+    sourceIdentity: row.source_identity ? String(row.source_identity) : undefined,
+    integrationKey: row.integration_key ? String(row.integration_key) : undefined,
     title: String(row.title),
     instruction: String(row.instruction),
     repo: String(row.repo),
@@ -527,6 +636,38 @@ function mapPluginConfig(row: Record<string, unknown>): PluginConfig {
   };
 }
 
+function mapAgentLease(row: Record<string, unknown>): AgentLease {
+  return {
+    id: String(row.id),
+    agentId: String(row.agent_id),
+    taskId: String(row.task_id),
+    executionId: row.execution_id ? String(row.execution_id) : null,
+    leasedAt: new Date(String(row.leased_at)),
+    leaseExpiresAt: new Date(String(row.lease_expires_at)),
+    releasedAt: row.released_at ? new Date(String(row.released_at)) : null,
+    releaseReason: row.release_reason ? String(row.release_reason) : null,
+    candidateAgents: decodeJsonArray(row.candidate_agents_json),
+    selectionReason: String(row.selection_reason),
+    prioritySnapshot: decodeJsonObject(row.priority_snapshot_json)
+  };
+}
+
+function mapHumanReview(row: Record<string, unknown>): HumanReview {
+  return {
+    id: String(row.id),
+    taskId: String(row.task_id),
+    executionId: row.execution_id ? String(row.execution_id) : null,
+    requestType: String(row.request_type),
+    reason: String(row.reason),
+    externalThreadRef: row.external_thread_ref ? String(row.external_thread_ref) : null,
+    responseSummary: row.response_summary ? String(row.response_summary) : null,
+    status: row.status as HumanReview["status"],
+    createdAt: new Date(String(row.created_at)),
+    updatedAt: new Date(String(row.updated_at))
+  };
+}
+
+/** 列中原生 JSON 对象与信封格式 `{ schemaVersion, data }` 双兼容，迁移期可共存。 */
 type JsonEnvelope<T> = {
   schemaVersion: string;
   data: T;

@@ -1,5 +1,9 @@
+/**
+ * Server 配置：`readConfig` 从环境变量拼装 `ServerConfig`，`validateConfig` 做插件与路径约束校验。
+ */
 import { resolve } from "node:path";
 
+/** 监听端口、调度、工作目录、目标修复、插件包名、治理阈值等运行期参数。 */
 export type ServerConfig = {
   port: number;
   scheduler: {
@@ -73,6 +77,7 @@ export type ServerConfig = {
   };
 };
 
+/** 可被 `readConfig` 逐项覆盖的默认值。 */
 export const CONFIG_DEFAULTS = {
   port: 3000,
   scheduler: {
@@ -153,6 +158,7 @@ export const CONFIG_DEFAULTS = {
   }
 };
 
+/** 读取并归一化环境变量，最后调用 `validateConfig`。 */
 export function readConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const port = readPositiveNumber(env, ["BACKEND_PORT"], CONFIG_DEFAULTS.port);
   const meegleMode = readEnum(env, ["TITING_PLUGIN_MEEGLE_MODE"], ["polling", "webhook"], CONFIG_DEFAULTS.plugins.meegle.mode);
@@ -410,6 +416,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   return config;
 }
 
+/** Meegle / 工作目录 / 默认执行器等交叉约束，启动前尽早失败。 */
 export function validateConfig(config: ServerConfig): void {
   const meegle = config.plugins.meegle;
   if (!config.plugins.taskIntegration.packageName) {

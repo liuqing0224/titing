@@ -22,6 +22,8 @@ export type TitingTask = {
   id: string;
   source: string;
   externalId: string | null;
+  sourceIdentity?: string;
+  integrationKey?: string;
   title: string;
   instruction: string;
   repo: string;
@@ -116,6 +118,8 @@ export type RepairGoal = {
   updatedAt: Date;
 };
 
+export type RepairPlan = RepairGoal;
+
 export type EvalResult = {
   id: string;
   taskId: string;
@@ -137,13 +141,80 @@ export type PluginConfig = {
   updatedAt: Date;
 };
 
+export type AgentLease = {
+  id: string;
+  agentId: string;
+  taskId: string;
+  executionId: string | null;
+  leasedAt: Date;
+  leaseExpiresAt: Date;
+  releasedAt: Date | null;
+  releaseReason: string | null;
+  candidateAgents: string[];
+  selectionReason: string;
+  prioritySnapshot: Record<string, unknown>;
+};
+
+export type HumanReviewStatus = "pending" | "answered" | "dismissed" | "expired";
+
+export type HumanReview = {
+  id: string;
+  taskId: string;
+  executionId: string | null;
+  requestType: string;
+  reason: string;
+  externalThreadRef: string | null;
+  responseSummary: string | null;
+  status: HumanReviewStatus;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export type PluginKind =
   | "task-integration"
   | "execution"
   | "environment"
   | "quality"
   | "observability-governance"
-  | "log";
+  | "log"
+  | "task-source"
+  | "workspace"
+  | "executor"
+  | "quality-check"
+  | "governance"
+  | "log-store"
+  | "observability"
+  | "notification"
+  | "intelligence"
+  | "platform";
+
+export type PluginCapability = {
+  kind: PluginKind;
+  capability: string;
+  priority?: number;
+};
+
+export type PluginDependency = {
+  kind: PluginKind;
+  capability?: string;
+  required?: boolean;
+};
+
+export type PluginConfigSchema = {
+  schemaVersion: string;
+  defaults?: Record<string, unknown>;
+  required?: string[];
+};
+
+export type PluginManifest = {
+  id: string;
+  displayName: string;
+  version: string;
+  kind: PluginKind;
+  capabilities: PluginCapability[];
+  dependencies?: PluginDependency[];
+  configSchema?: PluginConfigSchema | null;
+};
 
 export type CreateTaskInput = {
   source?: string;

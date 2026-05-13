@@ -1,3 +1,6 @@
+/**
+ * 集成烟测：临时目录中建库、`run-migrations`、短时拉起 server 并对 health/readiness 做探测。
+ */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

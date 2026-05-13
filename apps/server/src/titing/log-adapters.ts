@@ -1,3 +1,7 @@
+/**
+ * 将 `@titing/plugin-api` 可观测事件、执行日志落盘到当前选中的 `LogPlugin`，并在需要时拆出
+ * stdout/stderr/summary 等附加 `LogEntry` 便于检索与展示。
+ */
 import {
   ExecutionLogRecord,
   ExecutionLogRepository,
@@ -7,6 +11,7 @@ import {
 } from "@titing/plugin-api";
 import { EventStreamView } from "./event-stream";
 
+/** 由 `LogPlugin` 实现 `EventStreamView`：append 即写日志，订阅走插件能力。 */
 export class FileLogEventStream implements EventStreamView {
   constructor(private readonly plugin: LogPlugin) {}
 
@@ -36,6 +41,7 @@ export class FileLogEventStream implements EventStreamView {
   }
 }
 
+/** 不落库的执行日志：`ExecutionLogRepository` 委托同一 `LogPlugin`，与事件流同源。 */
 export class FileExecutionLogRepository implements ExecutionLogRepository {
   constructor(private readonly plugin: LogPlugin) {}
 
@@ -53,6 +59,7 @@ export class FileExecutionLogRepository implements ExecutionLogRepository {
   }
 }
 
+/** 运行时任意通道写一条结构化日志（供执行器等调用）。 */
 export async function appendRuntimeLog(plugin: LogPlugin, entry: LogEntry): Promise<void> {
   await plugin.append(entry);
 }
@@ -89,6 +96,7 @@ function inferLevel(eventType: string): LogEntry["level"] {
   return "debug";
 }
 
+/** 从执行器 payload 衍生分 channel 的原始输出条目，便于按 stdout/stderr 过滤。 */
 function toExecutorOutputEntries(entry: LogEntry): LogEntry[] {
   if (!entry.taskId || !entry.executionId) {
     return [];

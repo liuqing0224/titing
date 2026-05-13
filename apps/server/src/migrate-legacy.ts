@@ -1,3 +1,6 @@
+/**
+ * CLI：在应用当前迁移前先检测并重命名旧表，再将历史数据填入新 schema（见 legacy-migrate）。
+ */
 import { createDatabase } from "./titing/database";
 import { migrateLegacySchema } from "./titing/legacy-migrate";
 import { formatStartupError, verifyDatabaseConnection } from "./titing/startup-errors";

@@ -1,3 +1,8 @@
+/**
+ * Fastify HTTP 网关与运行时装配：SQLite 校验与迁移、`PluginRuntime` +
+ * `TitingServices` 组装、REST `/api/*`、SSE `/api/events`、readiness，以及支持
+ * `registerRoutes` 的插件扩展路由。
+ */
 import Fastify, { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import { randomUUID } from "node:crypto";
@@ -16,6 +21,7 @@ import { EventStreamView } from "./event-stream";
 import { isHttpRoutePlugin } from "./http-plugin";
 import { FileExecutionLogRepository, FileLogEventStream } from "./log-adapters";
 import { runMigrations } from "./migration-runner";
+import { buildOpsView } from "./ops-view";
 import { verifyDatabaseConnection } from "./startup-errors";
 import {
   PgAgentRepository,
@@ -28,6 +34,7 @@ import {
 } from "./repositories";
 import { createResolvedPlugins } from "./external-plugins";
 
+/** HTTP 路由仅依赖的服务方法子集，缩小 `wireRoutes` 与测试 mock 的表面。 */
 type RouteServices = Pick<
   TitingServices,
   | "createTask"
@@ -65,6 +72,7 @@ type RouteServices = Pick<
 
 type ServerPool = DatabaseClient;
 
+/** `buildServer` 完成后的可关闭资源与对外状态，供 `buildServerWithState` 挂载 HTTP。 */
 type BootstrapState = {
   services: RouteServices;
   events: EventStreamView;
@@ -73,6 +81,9 @@ type BootstrapState = {
   plugins: RuntimePlugin[];
 };
 
+/**
+ * 生产路径：建库 → 迁移 → 仓储与插件 → `TitingServices` → 默认调度器 + 全量路由。
+ */
 export async function buildServer(config: ServerConfig = readConfig()) {
   const database = createDatabase();
   try {
@@ -122,6 +133,9 @@ export async function buildServer(config: ServerConfig = readConfig()) {
   );
 }
 
+/**
+ * 在已构造的 `BootstrapState` 上挂载 Fastify（测试注入、或与 `buildServer` 解耦时使用）。
+ */
 export async function buildServerWithState(
   state: BootstrapState,
   options: { schedulerIntervalMs?: number; logger?: boolean; startScheduler?: boolean } = {}
@@ -156,6 +170,7 @@ export async function buildServerWithState(
   return fastify;
 }
 
+/** 挂载错误处理、`/api` 路由、SSE，以及实现了 `HttpRoutePlugin.registerRoutes` 的插件路由。 */
 function wireRoutes(fastify: FastifyInstance, state: BootstrapState): void {
   fastify.setErrorHandler((error: Error, _request: FastifyRequest, reply: FastifyReply) => {
     if (error instanceof NotFoundError) {
@@ -258,6 +273,8 @@ function wireRoutes(fastify: FastifyInstance, state: BootstrapState): void {
     return state.services.listTaskTransitions(params.id);
   });
 
+  fastify.get("/api/ops-view", async () => buildOpsView(state.services));
+
   fastify.get("/api/tasks/:id/logs", async (request: FastifyRequest) => {
     const params = request.params as { id: string };
     return state.services.listExecutionLogs(params.id);
@@ -327,6 +344,7 @@ function wireRoutes(fastify: FastifyInstance, state: BootstrapState): void {
   fastify.post("/api/debug/sync", async () => state.services.runTaskSyncNow());
   fastify.post("/api/debug/scheduler", async () => state.services.runSchedulerDispatchNow());
 
+  // Server-Sent Events：先 replay 当前快照，再订阅后续；客户端断开时取消监听。
   fastify.get("/api/events", async (_request: FastifyRequest, reply: FastifyReply) => {
     reply.raw.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -360,6 +378,7 @@ function wireRoutes(fastify: FastifyInstance, state: BootstrapState): void {
   }
 }
 
+/** SSE：`event:` + `data:` 行，`data` 为 JSON。 */
 function formatSseEvent(type: string, data: unknown): string {
   return `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
 }
@@ -372,6 +391,7 @@ const OPS_WATCH_EVENT_TYPES = [
   "plugin.integration_skipped"
 ] as const;
 
+/** 运维视角：聚合关注事件类型计数、排行榜与关联任务的摘要列表。 */
 function buildOpsEventSnapshot(tasks: TitingTask[], events: ObservabilityEvent[]) {
   const watchSet = new Set<string>(OPS_WATCH_EVENT_TYPES);
   const sortedEvents = [...events].sort((left, right) => {
@@ -437,6 +457,7 @@ function buildOpsEventSnapshot(tasks: TitingTask[], events: ObservabilityEvent[]
   };
 }
 
+/** `/api/readiness`：DB `select 1` + 必备插件种类 health。 */
 async function buildReadiness(state: BootstrapState) {
   const databaseCheck = await checkDatabase(state.pool);
   const plugins = await state.services.listPlugins();
@@ -455,6 +476,7 @@ async function buildReadiness(state: BootstrapState) {
   };
 }
 
+/** readiness 中的数据库探测：单次 `select 1`。 */
 async function checkDatabase(pool: Pick<ServerPool, "query">): Promise<{ ok: boolean; message: string }> {
   try {
     await pool.query("select 1");
@@ -467,6 +489,7 @@ async function checkDatabase(pool: Pick<ServerPool, "query">): Promise<{ ok: boo
   }
 }
 
+/** 环境、执行、可观测治理三类必须存在且 `health.healthy`。 */
 function evaluatePluginReadiness(
   plugins: Awaited<ReturnType<TitingServices["listPlugins"]>>
 ): {
@@ -495,6 +518,9 @@ function evaluatePluginReadiness(
   };
 }
 
+/**
+ * 确保存在 `codex-agent-*` / `cursor-agent-*` 占位 Agent；已存在且 offline 无任务时抬回 idle。
+ */
 export async function seedAgents(services: TitingServices, agentCount: number): Promise<void> {
   const existing = await services.listAgents();
   const byKey = new Map(existing.map((agent) => [agent.id, agent]));

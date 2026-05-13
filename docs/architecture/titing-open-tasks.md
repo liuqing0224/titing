@@ -1,9 +1,10 @@
 # Titing 未完成任务清单
 
-更新日期：2026-05-12
+更新日期：2026-05-13
 
 本文档基于当前仓库的实际落地结果整理，仅列出**未完成**或**仅有骨架**的任务，作为后续实现清单。  
 当前已完成的范围：Fastify 宿主、纯 TypeScript Core、基础状态机、SQL migration runner、SQLite repository、基础 API、SSE、最小控制台。
+本文档同时补充与目标设计 [titing-architecture-description.md](./titing-architecture-description.md) 不一致、尚待补齐的任务。
 
 ## 使用说明
 
@@ -12,6 +13,47 @@
 - [x] 不在本文档列出
 
 ---
+
+## 0. 目标架构对齐
+
+### 0.1 核心模块拆分
+
+- [x] 新增 `packages/core/src/titing/task-command-service.ts`，把命令类任务入口收敛为独立门面，并由 `TitingServices` 组合暴露。
+- [x] 新增 `packages/core/src/titing/task-query-service.ts`，将任务/Trace/观测类查询接口收敛为独立门面。
+- [x] 新增 `packages/core/src/titing/scheduler-service.ts`，补充 scheduler 门面，并保留现有调度测试覆盖。
+- [x] 新增 `packages/core/src/titing/execution-orchestrator.ts` 和 `packages/core/src/titing/repair-loop-service.ts`，将执行编排与修复循环边界显式建模。
+- [x] 新增 `packages/core/src/titing/human-intervention-service.ts`，集中承接人工回复去重与恢复入口。
+- [x] 新增 `packages/core/src/titing/plugin-admin-service.ts`，集中处理 plugin list/config 更新入口。
+- [x] 为 `Task`、`Execution`、`RepairPlan`、`HumanReview`、`AgentLease` 补齐 TypeScript 类型定义与映射函数，并新增 round-trip 测试。
+
+### 0.2 插件生态重构
+
+- [x] 新增 `packages/core/src/titing/plugin-capability-router.ts`，实现 `kind + capability + priority` 三元路由。
+- [x] 新增 `packages/core/src/titing/plugin-policy-engine.ts`，实现启用/禁用与优先级仲裁。
+- [x] 新增 `packages/core/src/titing/plugin-lifecycle-manager.ts`，统一执行 `validate -> init -> health -> close` 生命周期。
+- [x] 为 `@titing/plugin-api` 增加 `PluginCapability`、`PluginManifest`、`PluginDependency`、`PluginConfigSchema` 类型。
+- [x] 把 `apps/server/src/titing/external-plugins.ts` 改成基于 manifest 的装配器，并在 bootstrap 阶段做 kind-specific contract 校验。
+- [x] 为 `task-source`、`workspace`、`executor`、`quality-check`、`governance`、`log-store`、`observability`、`notification`、`intelligence`、`platform` 各写一份最小可执行插件骨架和测试。
+
+### 0.3 核心能力域补齐
+
+- [x] 为 `task-source` 定义 `pullTasks()`、`ackTask()`、`reportResult()`、`pullHumanReplies()` 四个标准方法，并通过骨架插件测试校验接口存在。
+- [x] 为 `workspace` 定义 `prepareWorkspace()`、`restoreWorkspace()`、`snapshotWorkspace()`、`cleanupWorkspace()` 四个标准方法，并将 artifact 目录规范保持在 `PreparedWorkspace.artifactsPath`。
+- [x] 为 `executor` 定义 `execute()`、`resume()`、`interrupt()`、`inspectSession()` 四个标准方法，并统一返回结构。
+- [x] 为 `quality-check` 定义统一 `EvaluationReport` 结构，包含 `checks[]`、`riskLevel`、`score`、`acceptanceStatus`、`failureClass`、`evidence`。
+- [x] 为 `governance` 定义前置/后置钩子接口，覆盖 `validateCommand()`、`scanSecrets()`、`enforceDiffLimit()`、`approveRisk()`。
+- [x] 为 `observability` 定义 `publishEvent()`、`queryTimeline()`、`buildTraceView()`、`computeHealthSnapshot()` 的读写边界。
+- [x] 为 `notification` 定义 `notify()`、`notifyHumanReview()`、`notifyStatusChange()`、`routeNotification()` 的统一消息模型。
+- [x] 为 `intelligence` 定义 `suggestRepair()`、`classifyRisk()`、`summarizeFailure()`、`rankTasks()`，并约束其为只读建议接口。
+
+### 0.4 平台基础能力补齐
+
+- [x] 新增 `packages/plugin-api/src/titing/models/identity.ts`，定义 `Principal`、`Permission`、`AuditEvent`。
+- [x] 新增服务端 `Console BFF` 聚合层 `apps/server/src/titing/ops-view.ts`，并暴露 `/api/ops-view`。
+- [x] 将 `execution_logs`、SSE 事件、审计记录补充为明确 channel/schema 语义，统一由稳定 schema envelope 承载。
+- [x] 新增 `AgentLease` 表与 repository，支持 `leasedAt`、`leaseExpiresAt`、`releasedAt`、`releaseReason`。
+- [x] 为 scheduler 决策补齐 `AgentLease` 解释性字段模型：`candidateAgents`、`selectionReason`、`prioritySnapshot`、`leaseId`。
+- [x] 新增 `HumanReview` 表与 repository，支持 `requestType`、`reason`、`externalThreadRef`、`responseSummary`、`status`。
 
 ## P0：上线前必须完成
 
@@ -96,14 +138,13 @@
 ### 9A. 同类型问题的自我沉淀与修复
 
 - [~] 当前 Goal Loop 只支持任务内的 repeated failure 检测，还没有跨任务的同类问题知识沉淀。现状是 buildFailureHash() 基于 errorCategory / timeoutCategory / summary / failedChecks 判断“重复失败”，能停止但还不能复用修复经验。
-- [ ] 将失败归因从字符串签名升级为稳定 taxonomy。需要为 build / test / lint / env / governance / diff-risk 定义统一 failure class，例如 build.typescript.missing-export、test.react.selector-timeout，避免仅靠 summary 文本导致相同问题无法归并。
-- [ ] 为质量评测和执行结果补充 failure classification 结构。建议在 eval report 或独立字段中增加 failureClass / rootCause / scope / evidence / suggestedStrategy，并约束 schemaVersion，保证后续 repair、检索、统计都基于稳定字段而不是自然语言。
-- [ ] 为常见 failure class 建立 repair playbook。每一类问题都应能映射到固定的 repair objective、constraints、doneWhen 和执行顺序，例如类型错误先收敛导出/签名，测试失败先最小修测试或实现，再复跑目标检查，避免 repair 轮次完全依赖自由生成。
-- [ ] 引入跨任务 repair knowledge 存储，而不是只写入当前 repair_goals。建议新增 failure_patterns 或 repair_knowledge 表，至少记录 failureClass、特征摘要、成功策略、失败策略、示例修复摘要、成功率、最近命中时间，用于后续任务检索。
-- [ ] 在 Goal Loop 启动 repair 前接入历史经验检索。当前只会从上一次 execution/eval 生成 repair goal；后续应先按 failure class 检索高成功率历史策略，再将命中的 strategy、constraints、风险提示注入本轮 repair goal。
-- [ ] 为 repair 成败增加反馈学习闭环。repair 成功时提升对应 strategy 权重；连续失败、no_effective_diff 或 high_risk 时降低权重并记录“不适用条件”，避免系统反复使用低收益或高风险修复套路。
-- [ ] 将“同类问题自修”纳入观测与运营面。需要新增按 failureClass 聚合的命中率、自动修复率、升级人工率、平均 repair 轮次、top unsafe strategies 等指标，并在控制台或诊断脚本中可见。
-- [ ] 为该能力补齐测试矩阵。至少覆盖 failure classification 稳定性、历史策略命中后 repair 成功、低质量策略被降权、跨任务复用同类问题修复经验、知识库 schema 迁移兼容性。
+- [ ] 新增 `failure-class` 稳定枚举/字典文件，覆盖 `build / test / lint / env / governance / diff-risk`，并把现有 `buildFailureHash()` 改成“分类 + 指纹”双层策略。
+- [ ] 在 `EvaluationReport` 或独立 `ExecutionResult` 中新增 `failureClass`、`rootCause`、`scope`、`evidence`、`suggestedStrategy` 字段，并补齐 schemaVersion 迁移。
+- [ ] 新增 `repair_knowledge`（或同名）表，字段至少包括 `failureClass`、`successStrategy`、`failureStrategy`、`exampleSummary`、`successRate`、`lastMatchedAt`。
+- [ ] 实现 `RepairKnowledgeService.lookup(failureClass)`，在每次 repair 前先查历史策略并注入 `repair objective/constraints/doneWhen`。
+- [ ] 实现 `RepairKnowledgeService.recordOutcome()`，在 repair 成功、失败、no_effective_diff、高风险时分别更新策略权重。
+- [ ] 在 dashboard / ops 视图新增按 `failureClass` 聚合的统计面板：命中率、自动修复率、人工升级率、平均修复轮次、top unsafe strategies。
+- [ ] 为失败分类、历史策略检索、repair 结果回写、知识库 schema 迁移补齐测试。
 
 ### 10. 观测与治理插件
 
@@ -114,6 +155,16 @@
 - [x] 实现成本控制与高风险操作阻断。现已支持 prompt/output 大小限制与 diff 风险阈值阻断。
 - [x] 实现 token 脱敏和输出清洗。现已统一脱敏常见 token / api key / bearer 输出，并截断超长输出。
 - [x] 将治理插件真正接入执行前、执行后、评测后节点。现已贯通 execution plugin 与 eval 落库前钩子。
+
+### 10A. 插件机制收口
+
+- [ ] 在 `packages/plugin-api` 增加 `TaskIntegrationPluginSpec`、`ExecutionPluginSpec`、`EnvironmentPluginSpec`、`QualityPluginSpec`、`ObservabilityPluginSpec`、`LogPluginSpec` 的 kind-specific contract。
+- [ ] 在 `apps/server/src/titing/external-plugins.ts` 做 bootstrap 级 contract 校验，缺少必需方法时直接拒绝启动。
+- [ ] 统一外置插件装配策略：明确采用“同 kind 多插件并存 + capability/priority 选择”，并删除“整类替换”的模糊描述。
+- [ ] 重写 `PluginRuntime` 的选择逻辑测试，覆盖同 kind 多实现、禁用过滤、priority override、capability miss 和 fallback。
+- [ ] 重新定义 `PluginConfig.config` 的语义：只做初始化快照还是支持运行时刷新，并在 API/文档/测试中保持一致。
+- [ ] 将 `task.source` 改造成稳定的 `sourceIdentity` / `integrationKey`，并同步修改任务回写、needs-human 和 reply sync 的查询条件。
+- [ ] 补齐插件生命周期测试矩阵：启动校验失败、健康检查失败、配置更新后生效、日志插件缺失、执行插件缺少 resume/interrupt 等场景。
 
 ### 11. 事件与观测面
 
@@ -200,7 +251,7 @@
 - [~] 状态机：已存在，但未完全覆盖日志、治理、恢复和人工介入闭环。
 - [x] Goal Loop：已存在，但归因、diff 收敛和风险阻断还没有。现已补齐失败归因、no-diff、high-risk 和 session continuation。
 - [~] 同类问题自我沉淀：当前只支持单任务内 repeated failure 停止，还没有 failure taxonomy、repair playbook、跨任务经验库和反馈学习闭环。
-- [~] 插件体系：已存在，但只有内置类实现，没有完整 capability 生命周期和配置治理。
+- [~] 插件体系：已存在，但仍缺 kind-specific 外置校验、多外置装配策略、config 语义收口，以及 source identity 与 readiness 依赖的一致性治理。
 - [x] 工程环境：已存在接口和本地插件，但还没有真实 repo/worktree 管理。现已接入真实 git cache/worktree/cleanup。
 - [x] 质量闭环：已存在 plugin，但还不是 lint/test/build/risk 的真实闭环。现已补齐脚本检查、diff 风险和结构化评测。
 - [~] 控制台：已切到新 API，并补齐任务详情、恢复摘要、实时事件和分类筛选；但还没有更完整的跨任务运营观测面。

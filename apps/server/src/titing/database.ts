@@ -1,3 +1,7 @@
+/**
+ * 基于 `node:sqlite` 的本地数据库：把 Postgres 风格占位符（`$1`）与部分类型 cast 适配为 SQLite，
+ * 对外暴露与 `pg` 类似的 `query` / `end` 接口供仓储层复用。
+ */
 import { mkdirSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -14,6 +18,7 @@ export interface DatabaseClient {
   end(): Promise<void>;
 }
 
+/** 打开（或创建）`DATABASE_FILE` 指向的库文件，启用外键、WAL 与 busy_timeout。 */
 export function createDatabase() {
   const databasePath = resolve(process.env.DATABASE_FILE ?? ".titing/sqlite/titing.sqlite");
   ensureParentDir(databasePath);
@@ -32,6 +37,7 @@ export function createDatabase() {
   return { pool, databasePath };
 }
 
+/** 无参多语句走 `exec`；单语句 `prepare` + `all`/`run`；`$n` 已在上游归一为 `?n`。 */
 function executeQuery(database: DatabaseSync, sql: string, values: unknown[]): QueryResult {
   const normalizedSql = normalizeSql(sql);
   if (values.length === 0 && hasMultipleStatements(normalizedSql)) {
@@ -59,6 +65,7 @@ function executeQuery(database: DatabaseSync, sql: string, values: unknown[]): Q
   };
 }
 
+/** 将仓储层编写的 `$1` 占位与 Postgres cast 转为 SQLite 可执行形态。 */
 function normalizeSql(sql: string): string {
   return sql
     .replace(/\$([0-9]+)/g, "?$1")

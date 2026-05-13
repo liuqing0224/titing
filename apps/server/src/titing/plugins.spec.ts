@@ -95,6 +95,36 @@ describe("LocalWorktreeEnvironmentPlugin", () => {
       await plugin.cleanupWorkspace({ ...task, status: "failed" }, workspace);
 
       expect(await exists(workspace.workspacePath)).toBe(true);
+      expect(await exists(workspace.repoPath)).toBe(true);
+      expect(await exists(join(workspace.repoPath, "README.md"))).toBe(true);
+    } finally {
+      await rm(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves successful workspaces when cleanup-on-success is disabled", async () => {
+    const sandbox = await mkdtemp(join(tmpdir(), "titing-env-"));
+    try {
+      const sourceRepo = join(sandbox, "source");
+      await createGitRepo(sourceRepo, {
+        "README.md": "# demo\n"
+      });
+
+      const plugin = new LocalWorktreeEnvironmentPlugin({
+        ...createConfig(sandbox),
+        workspace: {
+          ...createConfig(sandbox).workspace,
+          cleanupOnSuccess: false
+        }
+      });
+      const task = createTask(sourceRepo);
+      const workspace = await plugin.prepareWorkspace(task);
+
+      await plugin.cleanupWorkspace({ ...task, status: "done" }, workspace);
+
+      expect(await exists(workspace.workspacePath)).toBe(true);
+      expect(await exists(workspace.repoPath)).toBe(true);
+      expect(await exists(join(workspace.repoPath, "README.md"))).toBe(true);
     } finally {
       await rm(sandbox, { recursive: true, force: true });
     }

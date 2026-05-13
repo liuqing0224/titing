@@ -1,7 +1,11 @@
+/**
+ * 启动阶段错误类型与包装：连接 / 迁移 / 通用 bootstrap，供 `main` 统一 `formatStartupError` 输出。
+ */
 import { DatabaseClient } from "./database";
 
 export type StartupStage = "connection" | "migration" | "bootstrap";
 
+/** 带阶段的 DB 启动失败，文案前缀 `[database:${stage}]` 便于 grep。 */
 export class DatabaseStartupError extends Error {
   constructor(
     readonly stage: StartupStage,
@@ -13,6 +17,7 @@ export class DatabaseStartupError extends Error {
   }
 }
 
+/** 首次 `select 1`，失败归类为 connection 阶段。 */
 export async function verifyDatabaseConnection(pool: DatabaseClient): Promise<void> {
   try {
     await pool.query("select 1");
@@ -21,6 +26,7 @@ export async function verifyDatabaseConnection(pool: DatabaseClient): Promise<vo
   }
 }
 
+/** 迁移异常统一为 migration 阶段的 `DatabaseStartupError`。 */
 export function wrapMigrationError(error: unknown): DatabaseStartupError {
   if (error instanceof DatabaseStartupError) {
     return error;
@@ -28,6 +34,7 @@ export function wrapMigrationError(error: unknown): DatabaseStartupError {
   return new DatabaseStartupError("migration", describeError("Failed to apply database migrations", error), error);
 }
 
+/** 顶层 catch：沿用 DB 结构化错误，否则包一层通用 bootstrap 文案。 */
 export function wrapBootstrapError(error: unknown): Error {
   if (error instanceof DatabaseStartupError) {
     return error;
@@ -35,6 +42,7 @@ export function wrapBootstrapError(error: unknown): Error {
   return new Error(describeError("Server bootstrap failed", error), { cause: error });
 }
 
+/** 控制台输出：优先 `Error.message`。 */
 export function formatStartupError(error: unknown): string {
   if (error instanceof Error) {
     return error.message;

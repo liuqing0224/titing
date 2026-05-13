@@ -1,7 +1,11 @@
+/**
+ * 旧 SQLite 升级：识别旧表 → rename 为 `legacy_*` → 跑当前迁移 → 将数据灌入新 schema。
+ */
 import { DatabaseClient } from "./database";
 import { runMigrations } from "./migration-runner";
 import { wrapMigrationError } from "./startup-errors";
 
+/** 回填/中间 JSON 与 `repositories` 中信封版本对齐。 */
 const JSON_SCHEMA_VERSION = "2026-05-11";
 
 export type LegacyMigrationResult = {
@@ -13,6 +17,7 @@ export type LegacyMigrationResult = {
   };
 };
 
+/** 幂等：无 legacy 检测命中时仍可安全重复调用（已通过 `schema_migrations` 跳过 SQL）。 */
 export async function migrateLegacySchema(pool: DatabaseClient): Promise<LegacyMigrationResult> {
   try {
     const renamedTables: string[] = [];

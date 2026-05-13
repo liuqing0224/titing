@@ -1,6 +1,9 @@
 import { createDatabase } from "./database";
 import { RootLogsPlugin } from "./plugins";
 
+/**
+ * CLI：按 task id 或外部来源 id 拉取任务及周边数据（transition、execution、日志、评测、repair goal）。
+ */
 type DiagnosisArgs = {
   taskId?: string;
   externalId?: string;

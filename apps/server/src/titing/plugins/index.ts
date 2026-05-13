@@ -17,8 +17,12 @@ export { DefaultObservabilityGovernancePlugin } from "./governance";
 export { RootLogsPlugin } from "./log";
 export { MeegleTaskIntegrationPlugin } from "./meegle";
 export { DefaultQualityPlugin } from "./quality";
+export { createSkeletonPlugins } from "./skeletons";
 
-export type BuiltinPluginGroups = Record<PluginKind, RuntimePlugin[]>;
+export type BuiltinPluginGroups = Record<
+  "log" | "task-integration" | "environment" | "execution" | "quality" | "observability-governance",
+  RuntimePlugin[]
+>;
 
 /**
  * Instantiates the default plugin stack grouped by kind so individual kinds can be overridden by external packages.

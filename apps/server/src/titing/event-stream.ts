@@ -1,3 +1,6 @@
+/**
+ * 观测事件视图：`EventSink` + 订阅与快照（生产环境由 `FileLogEventStream` 委托 `LogPlugin`）。
+ */
 import { EventSink, ObservabilityEvent } from "@titing/plugin-api";
 
 export interface EventStreamView extends EventSink {
@@ -5,6 +8,7 @@ export interface EventStreamView extends EventSink {
   snapshot(): ObservabilityEvent[];
 }
 
+/** 内存实现：环形保留最近事件，单机测试或占位用。 */
 export class InMemoryEventStream implements EventStreamView {
   private readonly listeners = new Set<(event: ObservabilityEvent) => void>();
   private readonly recentEvents: ObservabilityEvent[] = [];

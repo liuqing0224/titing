@@ -33,6 +33,20 @@ Titing is an AI engineering execution controller. It controls task lifecycle, st
 - Observability and governance plugins
 - Log plugins: append, lookup by task/trace, subscription for SSE
 
+Current runtime behavior and constraints:
+
+- PluginRuntime supports multiple plugins of the same kind in memory and selects implementations by enabled flag, effective priority, and execution capability matching.
+- The host-side external plugin loader does not yet expose a true "many external plugins per kind" model. External registration is currently "whole-kind replacement by one plugin factory result".
+- Because of that replacement model, execution is the most constrained kind: configuring one external execution package removes both built-in runners and collapses the kind to a single external implementation.
+- Host bootstrap depends on a log plugin during startup to back SSE and execution log adapters, so log is operationally required even though selection happens through the same generic runtime.
+- Plugin configuration currently influences enable/disable and effective priority; arbitrary config payload is passed into init but is not yet a fully modeled dynamic runtime configuration channel.
+
+Current architecture gaps:
+
+- External plugin loading validates only the base RuntimePlugin shape during bootstrap. Kind-specific required methods are not yet asserted up front, so some invalid plugins can fail late when first exercised by the scheduler.
+- The current source field on tasks doubles as both business origin and task-integration plugin identifier for result reporting and needs-human reply sync. This couples persisted task provenance to plugin instance identity more tightly than desired.
+- Readiness semantics are narrower than the real execution chain: environment, execution, and observability-governance are required for green readiness, but log remains a de facto runtime dependency and task-integration/quality can still materially affect business completeness.
+
 ### Persistence
 
 - SQLite via bundled node:sqlite binding; default file .titing/sqlite/titing.sqlite, overridable via env DATABASE_FILE
@@ -98,6 +112,23 @@ Transitions are only legal through the state machine. Every transition emits a s
 
 - Append structured LogEntry lines to the repository-root logs/ tree
 - Back GET /api/events (SSE snapshot + subscription), task log APIs, and trace aggregation reads
+
+## Plugin Resolution Model
+
+Titing separates plugin concerns into three layers:
+
+- Contract layer: `packages/plugin-api` defines stable runtime interfaces and domain payloads.
+- Selection layer: `packages/core` owns enable/disable filtering, priority ordering, and capability-based selection.
+- Host assembly layer: `apps/server` constructs the concrete plugin list from built-in groups plus optional external replacements.
+
+This separation keeps the controller core framework-free, but it also means the host assembly rules are part of the architecture, not an implementation detail. In the current design, the host decides:
+
+- which plugin kinds are mandatory for bootstrap
+- whether built-in and external implementations can coexist
+- how much validation must happen before a plugin becomes selectable
+- whether plugin identity is stable enough to be referenced from persisted task data
+
+Future evolution should preserve the contract/selection split while relaxing the current whole-kind replacement rule and strengthening bootstrap-time validation.
 
 ## Workflow Prompt System
 

@@ -3,8 +3,10 @@ import {
   EvalResult,
   ExecutionLogRecord,
   ExecutionRecord,
+  HumanReview,
   PluginConfig,
   RepairGoal,
+  AgentLease,
   TaskListQuery,
   TaskTransition,
   TitingTask
@@ -60,4 +62,18 @@ export interface PluginConfigRepository {
   list(): Promise<PluginConfig[]>;
   getByPluginId(pluginId: string): Promise<PluginConfig | null>;
   upsert(config: PluginConfig): Promise<void>;
+}
+
+export interface AgentLeaseRepository {
+  create(lease: AgentLease): Promise<void>;
+  release(id: string, releasedAt: Date, releaseReason: string): Promise<void>;
+  listActive(): Promise<AgentLease[]>;
+  listByTask(taskId: string): Promise<AgentLease[]>;
+}
+
+export interface HumanReviewRepository {
+  create(review: HumanReview): Promise<void>;
+  save(review: HumanReview): Promise<void>;
+  getLatestByTask(taskId: string): Promise<HumanReview | null>;
+  listByTask(taskId: string): Promise<HumanReview[]>;
 }

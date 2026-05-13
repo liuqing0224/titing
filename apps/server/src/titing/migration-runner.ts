@@ -1,9 +1,13 @@
+/**
+ * SQL 迁移：维护 `schema_migrations` 表，按文件名排序幂等执行 `*.sql`（优先 `dist` 下编译产物目录）。
+ */
 import { readdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseClient } from "./database";
 import { wrapMigrationError } from "./startup-errors";
 
+/** 每个迁移文件单次事务，失败 rollback 后抛出带 `migration` 阶段的启动错误。 */
 export async function runMigrations(pool: DatabaseClient): Promise<void> {
   try {
     await pool.query(`

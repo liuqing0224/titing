@@ -19,9 +19,9 @@ describe("PG repository JSON schema envelopes", () => {
     await repository.save(createTask());
 
     const values = queries[0]?.values ?? [];
-    expect(values[11]).toEqual(JSON.stringify({ schemaVersion: "2026-05-11", data: ["safe"] }));
-    expect(values[12]).toEqual(JSON.stringify({ schemaVersion: "2026-05-11", data: ["passes"] }));
-    expect(values[13]).toEqual(JSON.stringify({ schemaVersion: "2026-05-11", data: { env: "dev" } }));
+    expect(values[13]).toEqual(JSON.stringify({ schemaVersion: "2026-05-11", data: ["safe"] }));
+    expect(values[14]).toEqual(JSON.stringify({ schemaVersion: "2026-05-11", data: ["passes"] }));
+    expect(values[15]).toEqual(JSON.stringify({ schemaVersion: "2026-05-11", data: { env: "dev" } }));
   });
 
   it("reads legacy and envelope task JSON formats", async () => {

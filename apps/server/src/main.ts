@@ -1,9 +1,13 @@
+/**
+ * 进程入口：加载多级 `.env`、读取配置并启动 Fastify（失败时格式化输出后退出）。
+ */
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { buildServer } from "./titing/server";
 import { readConfig } from "./titing/config";
 import { formatStartupError, wrapBootstrapError } from "./titing/startup-errors";
 
+/** 极简 KEY=VALUE 解析，不解析 export、不展开变量；与 dotenv 行为接近即可。 */
 function loadEnvFile(filePath: string): void {
   if (!existsSync(filePath)) {
     return;
@@ -34,6 +38,7 @@ function loadEnvFile(filePath: string): void {
   }
 }
 
+/** cwd、上级、再上级各尝试 `.env`，便于在 monorepo 子包里启动服务。 */
 function loadProjectEnv(): void {
   const cwd = process.cwd();
   loadEnvFile(resolve(cwd, ".env"));
@@ -41,6 +46,7 @@ function loadProjectEnv(): void {
   loadEnvFile(resolve(cwd, "..", "..", ".env"));
 }
 
+/** 失败时包装为可读 `Error`，写 stderr 并由进程 exit code 反映。 */
 async function bootstrap(): Promise<void> {
   try {
     loadProjectEnv();
