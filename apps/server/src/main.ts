@@ -1,14 +1,13 @@
-import "reflect-metadata";
+/**
+ * 进程入口：加载多级 `.env`、读取配置并启动 Fastify（失败时格式化输出后退出）。
+ */
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { ValidationPipe } from "@nestjs/common";
-import { NestFactory } from "@nestjs/core";
-import { createAppModule } from "./app.module";
-import { ApiResponseInterceptor } from "./api-response.interceptor";
-import { HttpExceptionFilter } from "./http-exception.filter";
-import { FileTeeConsoleLogger } from "./file-tee-console-logger";
-import { discoverServerPluginManifests } from "./plugin-loader";
+import { buildServer } from "./titing/server";
+import { readConfig } from "./titing/config";
+import { formatStartupError, wrapBootstrapError } from "./titing/startup-errors";
 
+/** 极简 KEY=VALUE 解析，不解析 export、不展开变量；与 dotenv 行为接近即可。 */
 function loadEnvFile(filePath: string): void {
   if (!existsSync(filePath)) {
     return;
@@ -26,38 +25,39 @@ function loadEnvFile(filePath: string): void {
     }
 
     const key = trimmed.slice(0, equalsIndex).trim();
-    const value = trimmed.slice(equalsIndex + 1).trim().replace(/^["']|["']$/g, "");
-    if (key && process.env[key] === undefined) {
-      process.env[key] = value;
+    if (!key) {
+      continue;
     }
+
+    let value = trimmed.slice(equalsIndex + 1).trim();
+    if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+
+    process.env[key] = value;
   }
 }
 
-for (const candidate of [
-  resolve(process.cwd(), ".env"),
-  resolve(process.cwd(), "../../.env"),
-  resolve(__dirname, "../../../.env")
-]) {
-  loadEnvFile(candidate);
+/** cwd、上级、再上级各尝试 `.env`，便于在 monorepo 子包里启动服务。 */
+function loadProjectEnv(): void {
+  const cwd = process.cwd();
+  loadEnvFile(resolve(cwd, ".env"));
+  loadEnvFile(resolve(cwd, "..", ".env"));
+  loadEnvFile(resolve(cwd, "..", "..", ".env"));
 }
 
+/** 失败时包装为可读 `Error`，写 stderr 并由进程 exit code 反映。 */
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(createAppModule(discoverServerPluginManifests()), {
-    logger: new FileTeeConsoleLogger()
-  });
-  app.setGlobalPrefix("api");
-  app.enableCors({ origin: "*" });
-  app.useGlobalInterceptors(new ApiResponseInterceptor());
-  app.useGlobalFilters(new HttpExceptionFilter());
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      transform: true
-    })
-  );
-
-  const port = Number(process.env.BACKEND_PORT ?? 3000);
-  await app.listen(port);
+  try {
+    loadProjectEnv();
+    const config = readConfig();
+    const server = await buildServer(config);
+    await server.listen({ port: config.port, host: "0.0.0.0" });
+  } catch (error) {
+    const wrapped = wrapBootstrapError(error);
+    console.error(formatStartupError(wrapped));
+    process.exitCode = 1;
+  }
 }
 
 void bootstrap();

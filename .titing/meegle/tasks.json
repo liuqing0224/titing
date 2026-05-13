@@ -1,0 +1,12 @@
+{
+  "tasks": [
+    {
+      "id": "MEEGLE-AUTO-1",
+      "title": "Auto fetch test",
+      "instruction": "Verify automatic task ingestion",
+      "repo": "https://example.com/demo.git",
+      "branch": "main",
+      "executor": "codex"
+    }
+  ]
+}

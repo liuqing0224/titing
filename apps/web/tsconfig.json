@@ -11,5 +11,5 @@
     "strictPropertyInitialization": false,
     "types": ["vite/client", "vitest/globals"]
   },
-  "include": ["src", "../../plugins/ops-console/web/src/**/*.ts", "../../plugins/ops-console/web/src/**/*.tsx"]
+  "include": ["src"]
 }

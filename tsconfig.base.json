@@ -2,14 +2,17 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "commonjs",
+    "baseUrl": ".",
     "moduleResolution": "node",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
+    "paths": {
+      "@titing/core": ["packages/core/src/index.ts"],
+      "@titing/plugin-api": ["packages/plugin-api/src/index.ts"]
+    },
     "ignoreDeprecations": "6.0"
   }
 }

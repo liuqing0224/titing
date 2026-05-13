@@ -1,5 +1,5 @@
 {
-  "name": "autodev-agent",
+  "name": "titing",
   "private": true,
   "workspaces": [
     "packages/*",
