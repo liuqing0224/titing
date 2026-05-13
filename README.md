@@ -119,3 +119,16 @@ npm run diagnose:task -w apps/server -- --task-id <task-id>
 6. **测试**：为健康检查、主干路径及外置装载若有交叉影响则补回归。
 
 设计与边界仍以 [插件开发文档](./docs/architecture/titing-plugin-development.md) 为准。
+
+## Changelog
+
+### 2026-05-13
+- **品牌与定位**：项目更名为 Titing，定位为 local-first 的 AI 工程执行控制器（任务生命周期、调度、Goal Loop、观测、治理与外部任务源统一接入）。
+- **运行时架构**：服务端宿主为 Fastify；编排与状态机在 `packages/core`（如 `ServiceScheduler`、`ServiceExecution`、插件运行时、repair / goal 逻辑）；对外稳定契约为 `packages/plugin-api`。
+- **插件栈**：默认内置根日志、Meegle 接入、本地 git worktree 环境、Codex/Cursor CLI 执行、默认质量链与观测治理插件；可通过各 `TITING_PLUGIN_*_PACKAGE` 用外置包**整体替换**对应插件种类（execution 外置时会同时替换内置 Codex 与 Cursor）。
+- **工作流提示词**：支持仓库内 `WORKFLOW_PROMPTS.md` 或 `knowledge/WORKFLOW_PROMPTS.md` 解析节点顺序、模板与循环上限，并在同一工作区内顺序执行。
+- **持久化**：使用 Node.js 内置 `node:sqlite` 与单文件 SQLite；迁移由服务端 SQL 脚本驱动，并提供 legacy 迁移命令（见上文常用命令）；默认库路径见文首，可用 `DATABASE_FILE` 覆盖。
+- **质量与人类介入**：默认质量插件覆盖 lint、类型检查、测试、构建与 diff 风险；配置侧增强并支持 needs-human 相关循环与交接场景。
+- **观测与运维**：强化运行时事件与执行上下文日志；提供 `diagnose:task`、`smoke:sqlite` 等命令；根目录结构化日志与控制台 SSE 数据源由内置 log 插件承担。
+- **前端**：运维控制台统一为 monorepo 内 `apps/web`（React），取代历史上独立的 ops-console 插件前端交付形态。
+- **仓库瘦身**：移除 Nest 模块化宿主、TypeORM 中心化数据访问及独立 codex/cursor executor 等插件包路径，对应能力收敛到 `apps/server` 内置插件实现与 SQLite 仓储。
